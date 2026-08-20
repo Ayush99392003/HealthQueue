@@ -1,0 +1,109 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "healthcare-appointment-manager"
+version = "0.1.0"
+description = "Intelligent token-based clinical queue with AI triage, ETA reflow, and dual-channel notifications"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # ── FastAPI Core ──────────────────────────────────────────────
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+
+    # ── Database ──────────────────────────────────────────────────
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.13.0",
+
+    # ── Config & Validation ───────────────────────────────────────
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+
+    # ── Auth ──────────────────────────────────────────────────────
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.2.0",
+
+    # ── AI / LLM ──────────────────────────────────────────────────
+    "instructor>=1.7.0",
+    "openai>=1.55.0",
+    "groq>=0.12.0",
+    "anthropic>=0.40.0",
+    "google-generativeai>=0.8.0",
+
+    # ── Resilience ────────────────────────────────────────────────
+    "tenacity>=9.0.0",
+
+    # ── Notifications ─────────────────────────────────────────────
+    "twilio>=9.3.0",
+
+    # ── Logging ───────────────────────────────────────────────────
+    "rich>=13.9.0",
+
+    # ── Cryptography (OAuth token encryption) ─────────────────────
+    "cryptography>=43.0.0",
+
+    # ── HTTP Client (health checks) ───────────────────────────────
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ── Ruff Linting ─────────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "A", "ANN"]
+ignore = [
+    "ANN101",  # self type annotation
+    "ANN102",  # cls type annotation
+    "ANN401",  # Any allowed for complex generics
+    "B008",    # FastAPI Depends() in defaults — allowed pattern
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ── pytest ────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = "-v --tb=short --cov=src --cov-report=term-missing"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/scripts/*", "tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

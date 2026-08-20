@@ -1,0 +1,86 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# ── Virtual Environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Package Managers ─────────────────────────────────────────
+.uv/
+uv.lock
+
+# ── Environment Variables (NEVER COMMIT) ─────────────────────
+.env
+.env.local
+.env.staging
+.env.production
+*.env
+
+# ── IDE / Editor ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Testing & Coverage ────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# ── Linting / Formatting ─────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Alembic ───────────────────────────────────────────────────
+# Keep migrations/ tracked — but not cache or pyc inside
+alembic/__pycache__/
+
+# ── Node.js (Frontend) ────────────────────────────────────────
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+*.lock
+!uv.lock
+
+# ── Docker ───────────────────────────────────────────────────
+.dockerignore
+
+# ── Certificates & Keys ───────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ── Jupyter (if used for prototyping) ────────────────────────
+.ipynb_checkpoints/
+
+# ── OS artifacts ─────────────────────────────────────────────
+.DS_Store
+desktop.ini
+
+# ── Internal Docs ────────────────────────────────────────────
+docs/
