@@ -45,9 +45,17 @@ export default function DoctorDashboard({ onToast }) {
   const [activeTab, setActiveTab] = useState('queue');
 
   // Doctor setup
-  const [doctorId, setDoctorId] = useState(() => localStorage.getItem('hq_doctor_id') || '');
+  const [doctorId, setDoctorId] = useState(() => {
+    return (user?.role === 'doctor' && user?.id) ? String(user.id) : (localStorage.getItem('hq_doctor_id') || '2');
+  });
   const [session, setSession] = useState('morning');
   const [date, setDate] = useState(TODAY);
+
+  // Leave Management State
+  const TOMORROW = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const [leaveForm, setLeaveForm] = useState({ start_date: TOMORROW, end_date: TOMORROW, reason: 'Annual Leave / CME Training' });
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+  const [leaveResult, setLeaveResult] = useState(null);
 
   // Queue
   const [queue, setQueue] = useState([]);
@@ -66,6 +74,13 @@ export default function DoctorDashboard({ onToast }) {
   const [submittingNotes, setSubmittingNotes] = useState(false);
 
   const pollRef = useRef(null);
+
+  useEffect(() => {
+    if (user?.role === 'doctor' && user?.id) {
+      setDoctorId(String(user.id));
+      localStorage.setItem('hq_doctor_id', String(user.id));
+    }
+  }, [user]);
 
   const fetchQueue = () => {
     if (!doctorId) return;
@@ -108,6 +123,30 @@ export default function DoctorDashboard({ onToast }) {
       onToast('error', 'Failed to complete', err.message);
     } finally {
       setCompletingId(null);
+    }
+  };
+
+  const handleApplyLeave = async () => {
+    if (!doctorId) { onToast('warning', 'Set Doctor ID', 'Doctor ID is required.'); return; }
+    if (!leaveForm.start_date || !leaveForm.end_date) {
+      onToast('warning', 'Select Dates', 'Please select leave start and end dates.');
+      return;
+    }
+    setLeaveSubmitting(true);
+    setLeaveResult(null);
+    try {
+      const res = await api.doctors.addLeave(doctorId, {
+        start_date: leaveForm.start_date,
+        end_date: leaveForm.end_date,
+        reason: leaveForm.reason || 'Doctor Leave of Absence',
+      });
+      setLeaveResult(res);
+      onToast('success', 'Leave recorded!', `${res.cancelled_appointments || 0} conflicting appointments cancelled.`);
+      fetchQueue();
+    } catch (err) {
+      onToast('error', 'Leave request failed', err.message);
+    } finally {
+      setLeaveSubmitting(false);
     }
   };
 
@@ -157,6 +196,7 @@ export default function DoctorDashboard({ onToast }) {
   const tabs = [
     { id: 'queue', label: 'Live Queue', icon: <Activity size={15} /> },
     { id: 'schedule', label: 'My Schedule', icon: <Calendar size={15} /> },
+    { id: 'leave', label: 'Doctor Leave & Off-Duty', icon: <Clock size={15} /> },
   ];
 
   return (
@@ -344,6 +384,90 @@ export default function DoctorDashboard({ onToast }) {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ===== LEAVE & OFF-DUTY TAB ===== */}
+      {activeTab === 'leave' && (
+        <div style={{ maxWidth: 680, margin: '0 auto' }} className="flex flex-col gap-4">
+          <div className="card card-pad">
+            <h3 className="font-700 mb-1" style={{ fontSize: 'var(--text-lg)' }}>Record Doctor Leave of Absence</h3>
+            <p className="text-sm text-secondary mb-4">
+              Schedule off-duty dates. The conflict resolution engine will automatically cancel all overlapping appointments and enqueue real-time notifications to affected patients.
+            </p>
+
+            <div className="flex flex-col gap-4">
+              <div className="grid-2">
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Leave Start Date</label>
+                  <input
+                    id="leave-start-date"
+                    className="form-input"
+                    type="date"
+                    min={TODAY}
+                    value={leaveForm.start_date}
+                    onChange={e => setLeaveForm(f => ({ ...f, start_date: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Leave End Date</label>
+                  <input
+                    id="leave-end-date"
+                    className="form-input"
+                    type="date"
+                    min={leaveForm.start_date || TODAY}
+                    value={leaveForm.end_date}
+                    onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Reason for Absence</label>
+                <input
+                  id="leave-reason"
+                  className="form-input"
+                  placeholder="e.g. Medical Conference / Annual Leave / CME Training"
+                  value={leaveForm.reason}
+                  onChange={e => setLeaveForm(f => ({ ...f, reason: e.target.value }))}
+                />
+              </div>
+
+              <button
+                id="submit-leave-btn"
+                className="btn btn-primary btn-lg w-full"
+                onClick={handleApplyLeave}
+                disabled={leaveSubmitting || !doctorId}
+              >
+                {leaveSubmitting ? <><span className="spinner spinner-sm" /> Processing Conflict Resolution…</> : 'Apply Leave & Auto-Cancel Overlapping Appointments'}
+              </button>
+            </div>
+          </div>
+
+          {leaveResult && (
+            <div className="info-banner success">
+              <CheckCircle size={20} style={{ flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <strong style={{ fontSize: 'var(--text-base)' }}>Doctor Leave Confirmed (ID #{leaveResult.leave_id})</strong>
+                <div className="text-sm mt-1">
+                  <strong>{leaveResult.cancelled_appointments || 0}</strong> overlapping appointment(s) were automatically cancelled.
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  Enqueued {leaveResult.notifications_queued || 0} patient cancellation alerts via WhatsApp & Email.
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="card card-pad" style={{ background: 'var(--bg-hover, rgba(255,255,255,0.02))' }}>
+            <div className="text-xs font-600 text-muted uppercase tracking-wider mb-2">How Conflict Resolution Operates</div>
+            <ul className="flex flex-col gap-2" style={{ paddingLeft: 18, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+              <li>Scans all pending and waiting tokens for Doctor #{doctorId} across the selected dates.</li>
+              <li>Atomically transitions all affected queue records from <code>waiting</code> to <code>cancelled</code>.</li>
+              <li>Dispatches real-time WhatsApp delay/reschedule alerts and formal Email cancellation records to each patient.</li>
+              <li>Frees up queue slots and removes pending appointments from live doctor queue.</li>
+            </ul>
+          </div>
         </div>
       )}
 

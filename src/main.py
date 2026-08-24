@@ -45,20 +45,22 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     except Exception as exc:
         logger.warning("Could not auto-create database tables on startup: %s", exc)
 
-    # Auto-seed demo data if DB is empty (ensures doctors visible to all new users)
+    # Auto-seed demo data if DB is empty or missing multi-day tokens
     try:
         from src.core.database import get_db_session
         from src.models.user import User
+        from src.models.queue import DoctorQueue
         from sqlalchemy import select, func
         async for session in get_db_session():
-            count = (await session.execute(select(func.count(User.id)))).scalar_one()
-            if count == 0:
-                logger.info("Empty database detected — auto-seeding demo data...")
+            user_count = (await session.execute(select(func.count(User.id)))).scalar_one()
+            queue_count = (await session.execute(select(func.count(DoctorQueue.id)))).scalar_one()
+            if user_count == 0 or queue_count < 15:
+                logger.info("Auto-seeding comprehensive 5-day demo clinical data (users=%d, queue_tokens=%d)...", user_count, queue_count)
                 from src.api.v1.admin import seed_demo_data
                 await seed_demo_data(db=session)
-                logger.info("Demo data seeded successfully on startup.")
+                logger.info("5-day demo clinical data seeded successfully on startup.")
             else:
-                logger.info("Database has %d users — skipping auto-seed.", count)
+                logger.info("Database has %d users and %d queue tokens — ready.", user_count, queue_count)
             break
     except Exception as exc:
         logger.warning("Could not auto-seed demo data: %s", exc)

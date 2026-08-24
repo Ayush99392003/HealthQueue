@@ -203,15 +203,18 @@ async def seed_demo_data(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     """
-    Populate rich demonstration data for testing all system features.
+    Populate comprehensive 5-day demonstration data for testing all system features.
     
     Creates:
     - 1 Admin: admin@clinic.com / Password123!
     - 5 Specialist Doctors: Cardiology, Neurology, Dermatology, General Practice, Orthopedics
-    - Mon-Sat Morning & Evening Working Hours
-    - 3 Test Patients: rahul@example.com, sneha@example.com, vikram@example.com
-    - Queue tokens for today (Regular, Priority, Anchor, Emergency)
-    - Pre-visit AI triage briefs and post-visit digital prescriptions
+    - 8 Patients with verified contact numbers
+    - Weekly Mon-Sat Morning & Evening Working Hours for all doctors
+    - Queue tokens for 5 consecutive days (Today + 4 days) across all doctors & sessions
+    - Diverse Tiers: Regular (FCFS), Priority (urgent/elderly), Anchor (time-bound), Emergency
+    - Live States: Day 0 has completed & in-progress tokens; Days 1-4 are waiting (ready for leave/booking tests)
+    - Full AI Pre-Visit Triage briefs with urgency scoring, chief complaints, and diagnostic questions
+    - Post-Visit clinical notes and prescription medication schedules
     """
     from datetime import date, datetime, time, timedelta
     from src.models.doctor import Doctor, DoctorAvailability
@@ -222,17 +225,22 @@ async def seed_demo_data(
     today = date.today()
     default_password_hash = hash_password("Password123!")
 
-    # ── 1. Create System Users ────────────────────────────────────────────────
+    # ── 1. Create System Users (1 Admin + 5 Doctors + 8 Patients) ──────────────
     users_data = [
         {"email": "admin@clinic.com", "role": "admin", "first_name": "Clinic", "last_name": "Admin", "phone": "+919000000001"},
-        {"email": "dr.sharma@clinic.com", "role": "doctor", "first_name": "Dr. Priya", "last_name": "Sharma", "phone": "+919876543210"},
-        {"email": "dr.mehta@clinic.com", "role": "doctor", "first_name": "Dr. Rajesh", "last_name": "Mehta", "phone": "+919876543211"},
-        {"email": "dr.kapoor@clinic.com", "role": "doctor", "first_name": "Dr. Ananya", "last_name": "Kapoor", "phone": "+919876543212"},
-        {"email": "dr.verma@clinic.com", "role": "doctor", "first_name": "Dr. Amit", "last_name": "Verma", "phone": "+919876543213"},
-        {"email": "dr.gupta@clinic.com", "role": "doctor", "first_name": "Dr. Sunita", "last_name": "Gupta", "phone": "+919876543214"},
+        {"email": "dr.sharma@clinic.com", "role": "doctor", "first_name": "Dr. Priya", "last_name": "Sharma", "phone": "+919876543210", "whatsapp_number": "+919876543210"},
+        {"email": "dr.mehta@clinic.com", "role": "doctor", "first_name": "Dr. Rajesh", "last_name": "Mehta", "phone": "+919876543211", "whatsapp_number": "+919876543211"},
+        {"email": "dr.kapoor@clinic.com", "role": "doctor", "first_name": "Dr. Ananya", "last_name": "Kapoor", "phone": "+919876543212", "whatsapp_number": "+919876543212"},
+        {"email": "dr.verma@clinic.com", "role": "doctor", "first_name": "Dr. Amit", "last_name": "Verma", "phone": "+919876543213", "whatsapp_number": "+919876543213"},
+        {"email": "dr.gupta@clinic.com", "role": "doctor", "first_name": "Dr. Sunita", "last_name": "Gupta", "phone": "+919876543214", "whatsapp_number": "+919876543214"},
         {"email": "rahul@example.com", "role": "patient", "first_name": "Rahul", "last_name": "Verma", "phone": "+919123456780", "whatsapp_number": "+919123456780"},
         {"email": "sneha@example.com", "role": "patient", "first_name": "Sneha", "last_name": "Patel", "phone": "+919123456781", "whatsapp_number": "+919123456781"},
         {"email": "vikram@example.com", "role": "patient", "first_name": "Vikram", "last_name": "Singh", "phone": "+919123456782", "whatsapp_number": "+919123456782"},
+        {"email": "anita@example.com", "role": "patient", "first_name": "Anita", "last_name": "Desai", "phone": "+919123456783", "whatsapp_number": "+919123456783"},
+        {"email": "rohit@example.com", "role": "patient", "first_name": "Rohit", "last_name": "Sharma", "phone": "+919123456784", "whatsapp_number": "+919123456784"},
+        {"email": "pooja@example.com", "role": "patient", "first_name": "Pooja", "last_name": "Reddy", "phone": "+919123456785", "whatsapp_number": "+919123456785"},
+        {"email": "karan@example.com", "role": "patient", "first_name": "Karan", "last_name": "Malhotra", "phone": "+919123456786", "whatsapp_number": "+919123456786"},
+        {"email": "meera@example.com", "role": "patient", "first_name": "Meera", "last_name": "Iyer", "phone": "+919123456787", "whatsapp_number": "+919123456787"},
     ]
 
     created_users = {}
@@ -255,19 +263,21 @@ async def seed_demo_data(
             await db.flush()
             created_users[udata["email"]] = user
 
-    # ── 2. Create Doctor Profiles ─────────────────────────────────────────────
+    # ── 2. Create Doctor Profiles & Weekly Availability ────────────────────────
     doctors_spec = [
-        {"email": "dr.sharma@clinic.com", "spec": "Cardiology", "exp": 15, "bio": "Senior Interventional Cardiologist specializing in hypertension and preventive cardiology."},
-        {"email": "dr.mehta@clinic.com", "spec": "Neurology", "exp": 12, "bio": "Consultant Neurologist with expertise in chronic migraines, tremors, and sleep disorders."},
-        {"email": "dr.kapoor@clinic.com", "spec": "Dermatology", "exp": 8, "bio": "Clinical and aesthetic dermatologist treating eczema, psoriasis, and acute rashes."},
-        {"email": "dr.verma@clinic.com", "spec": "General Practice", "exp": 10, "bio": "Primary care physician managing acute infections, lifestyle disorders, and preventive health."},
-        {"email": "dr.gupta@clinic.com", "spec": "Orthopedics", "exp": 14, "bio": "Orthopedic surgeon specializing in joint pain, sports injuries, and spine rehabilitation."},
+        {"email": "dr.sharma@clinic.com", "spec": "Cardiology", "exp": 15, "bio": "Senior Interventional Cardiologist specializing in hypertension, post-PCI management, and preventive cardiology."},
+        {"email": "dr.mehta@clinic.com", "spec": "Neurology", "exp": 12, "bio": "Consultant Neurologist with expertise in chronic migraines, peripheral neuropathy, and sleep disorders."},
+        {"email": "dr.kapoor@clinic.com", "spec": "Dermatology", "exp": 8, "bio": "Clinical and aesthetic dermatologist treating eczema, acute urticaria, and cystic acne."},
+        {"email": "dr.verma@clinic.com", "spec": "General Practice", "exp": 10, "bio": "Primary care physician managing acute viral fevers, lifestyle disorders, and preventive health."},
+        {"email": "dr.gupta@clinic.com", "spec": "Orthopedics", "exp": 14, "bio": "Orthopedic surgeon specializing in osteoarthritis, sports ligament injuries, and spine rehabilitation."},
     ]
 
+    doctor_models = {}
     for dinfo in doctors_spec:
         user = created_users[dinfo["email"]]
         res = await db.execute(select(Doctor).where(Doctor.id == user.id))
-        if not res.scalar_one_or_none():
+        doc = res.scalar_one_or_none()
+        if not doc:
             doc = Doctor(
                 id=user.id,
                 specialisation=dinfo["spec"],
@@ -284,8 +294,8 @@ async def seed_demo_data(
             db.add(doc)
             await db.flush()
 
-            # Add availability Mon-Sat
-            for day in range(6):
+            # Add availability Mon-Sun
+            for day in range(7):
                 db.add(DoctorAvailability(
                     doctor_id=user.id,
                     day_of_week=day,
@@ -302,117 +312,222 @@ async def seed_demo_data(
                     end_time=time(20, 0),
                     is_working_day=True,
                 ))
+        doctor_models[dinfo["spec"]] = doc
 
-    # ── 3. Create Sample Today Queue Tokens for Dr. Sharma ────────────────────
-    dr_sharma_id = created_users["dr.sharma@clinic.com"].id
-    p_rahul = created_users["rahul@example.com"]
-    p_sneha = created_users["sneha@example.com"]
-    p_vikram = created_users["vikram@example.com"]
-
-    sample_queue = [
-        {
-            "token": 1,
-            "tier": "regular",
-            "slot_type": "open",
-            "patient": p_rahul,
-            "status": "waiting",
-            "booked_mins_ago": 45,
-            "symptoms": "Severe throbbing headache for 3 days with nausea and sensitivity to light.",
-            "urgency": "high",
-            "chief_complaint": "Acute migraine attack with photophobia and nausea",
-        },
-        {
-            "token": 2,
-            "tier": "priority",
-            "slot_type": "open",
-            "patient": p_sneha,
-            "status": "waiting",
-            "booked_mins_ago": 30,
-            "symptoms": "Age 68 follow-up: mild exertional dyspnea and swollen ankles in the evening.",
-            "urgency": "medium",
-            "chief_complaint": "Exertional shortness of breath with peripheral edema in elderly patient",
-        },
-        {
-            "token": 3,
-            "tier": "regular",
-            "slot_type": "anchor",
-            "anchor_time": time(10, 30),
-            "patient": p_vikram,
-            "status": "waiting",
-            "booked_mins_ago": 60,
-            "symptoms": "Routine 3-month post-angioplasty review. No active chest discomfort.",
-            "urgency": "low",
-            "chief_complaint": "Routine post-percutaneous coronary intervention follow-up",
-        },
+    # Patient pool for rotation
+    patient_pool = [
+        created_users["rahul@example.com"],
+        created_users["sneha@example.com"],
+        created_users["vikram@example.com"],
+        created_users["anita@example.com"],
+        created_users["rohit@example.com"],
+        created_users["pooja@example.com"],
+        created_users["karan@example.com"],
+        created_users["meera@example.com"],
     ]
 
-    for qitem in sample_queue:
-        # Check if token exists for today
-        q_res = await db.execute(
-            select(DoctorQueue).where(
-                DoctorQueue.doctor_id == dr_sharma_id,
-                DoctorQueue.appointment_date == today,
-                DoctorQueue.session == "morning",
-                DoctorQueue.token_number == qitem["token"],
-            )
-        )
-        existing_q = q_res.scalar_one_or_none()
-        if not existing_q:
-            q_entry = DoctorQueue(
-                doctor_id=dr_sharma_id,
-                appointment_date=today,
-                session="morning",
-                token_number=qitem["token"],
-                display_position=qitem["token"],
-                patient_id=qitem["patient"].id,
-                tier=qitem["tier"],
-                slot_type=qitem["slot_type"],
-                anchor_time=qitem.get("anchor_time"),
-                status=qitem["status"],
-                booking_mode_used="advance",
-                booked_at=datetime.utcnow() - timedelta(minutes=qitem["booked_mins_ago"]),
-            )
-            db.add(q_entry)
-            await db.flush()
+    # Clinical scenarios library per specialty
+    clinical_scenarios = {
+        "Cardiology": [
+            ("Substernal chest heaviness on climbing stairs and palpitation.", "high", "Exertional angina pectoris evaluation", ["ECG and troponin review", "Adherence to statins and beta-blockers", "Any pain radiating to left jaw or arm"]),
+            ("Hypertension follow-up: BP reading 155/95 mmHg, mild frontal headache.", "medium", "Uncontrolled Stage 1 Essential Hypertension", ["Current antihypertensive dosing", "Dietary sodium restriction compliance", "Home BP log review"]),
+            ("Routine 6-month post-angioplasty review. No active chest discomfort.", "low", "Post-PCI coronary artery disease maintenance", ["Stent patency and antiplatelet therapy", "Exercise tolerance review", "Lipid profile targets"]),
+            ("Bilateral lower extremity edema worsening towards evening with mild fatigue.", "medium", "Dependent peripheral edema / early heart failure workup", ["Echocardiogram assessment", "Fluid intake and daily weight log", "Shortness of breath on lying flat"]),
+        ],
+        "Neurology": [
+            ("Right-sided throbbing headache with visual aura and photophobia for 2 days.", "high", "Acute classic migraine with visual aura", ["Migraine frequency and triggers", "Response to triptans / analgesics", "Any focal neurological deficits"]),
+            ("Burning sensation and 'pins and needles' numbness in both feet, worse at night.", "medium", "Distal symmetrical peripheral sensory neuropathy", ["HbA1c and diabetic history", "Vitamin B12 levels", "Gait stability and reflexes"]),
+            ("Episodic rotational vertigo triggered by rapid head turning when getting out of bed.", "medium", "Benign paroxysmal positional vertigo (BPPV)", ["Dix-Hallpike test findings", "Nystagmus duration", "History of inner ear infection"]),
+            ("Chronic cervical stiffness with radiating numbness to index finger.", "medium", "Cervical radiculopathy (C6-C7 distribution)", ["Neck movement range", "Spurling test response", "Ergonomic workplace setup"]),
+        ],
+        "Dermatology": [
+            ("Erythematous itchy rash with dry scaling on flexor surfaces of both arms.", "medium", "Atopic dermatitis exacerbation", ["Topical emollient regimen", "Contact allergen exposures", "Sleep disturbance due to pruritus"]),
+            ("Sudden onset urticarial wheals with intense itching across trunk after antibiotic.", "high", "Drug-induced acute urticaria", ["Culprit medication timeline", "Any lip, tongue, or facial swelling", "Need for oral antihistamines"]),
+            ("Persistent cystic acne lesions along jawline resistant to over-the-counter washes.", "low", "Severe nodulocystic facial acne", ["Prior retinoid or antibiotic trials", "Hormonal screening necessity", "Scarring risk evaluation"]),
+            ("Circumscribed annular scaly lesion with central clearing on left forearm.", "low", "Tinea corporis fungal infection", ["Topical antifungal compliance", "Pet or soil exposure history", "Differential diagnosis confirmation"]),
+        ],
+        "General Practice": [
+            ("High grade fever 102°F with severe body ache, chills, and dry cough for 3 days.", "high", "Acute viral febrile illness with systemic symptoms", ["Temperature chart and paracetamol response", "Hydration and urine output", "Complete blood count and Dengue/Flu screening"]),
+            ("Epigastric burning pain and acid reflux aggravated 1 hour after meals.", "medium", "Gastroesophageal reflux disease (GERD) with dyspepsia", ["PPI therapy trial", "Dietary trigger avoidance", "H. pylori testing indication"]),
+            ("Annual executive wellness review and routine preventive blood work analysis.", "low", "Routine annual preventive health assessment", ["Fasting blood glucose & lipid panel", "Lifestyle and BMI counselling", "Age-appropriate vaccination update"]),
+            ("Acute watery diarrhea 4-5 episodes since morning with mild cramping.", "medium", "Acute gastroenteritis with mild dehydration", ["Oral rehydration solution adherence", "Dietary history in last 24h", "Stool frequency and consistency"]),
+        ],
+        "Orthopedics": [
+            ("Severe bilateral knee joint pain on climbing stairs with 20-min morning stiffness.", "medium", "Bilateral knee osteoarthritis (Grade II-III)", ["Weight-bearing X-ray evaluation", "Quadriceps strengthening exercises", "NSAID tolerance and joint injections"]),
+            ("Acute twist in right ankle during sports yesterday with swelling and bruising.", "high", "Acute lateral ankle ligament sprain (Grade II)", ["Inability to bear weight (Ottawa rules)", "RICE protocol adherence", "Anterior drawer test stability"]),
+            ("Chronic lower back ache radiating to left posterior thigh on prolonged sitting.", "medium", "Lumbar disc herniation with Sciatica (L5-S1)", ["SLR (Straight Leg Raise) test angle", "Core stabilization physiotherapy", "MRI spine necessity"]),
+            ("Right shoulder pain on abduction and overhead reaching for past 3 weeks.", "medium", "Rotator cuff impingement syndrome", ["Neer and Hawkins impingement tests", "Subacromial bursa evaluation", "Physical therapy progression"]),
+        ],
+    }
 
-            # Pre-visit symptoms intake
-            db.add(Symptoms(
-                queue_id=q_entry.id,
-                symptom_text=qitem["symptoms"],
-                urgency_level=qitem["urgency"],
-                ai_summary={
-                    "urgency_level": qitem["urgency"],
-                    "chief_complaint": qitem["chief_complaint"],
-                    "suggested_questions": [
-                        "When did the symptoms first manifest and has intensity changed?",
-                        "Are you currently adhering to your baseline prescribed medications?",
-                        "Have you observed any dizziness, chest discomfort, or visual disturbance?",
-                    ],
+    # ── 3. Seed 5 Days of Queue Appointments for All Doctors ────────────────────
+    total_tokens_seeded = 0
+
+    for day_offset in range(5):
+        current_date = today + timedelta(days=day_offset)
+        is_today = (day_offset == 0)
+
+        for dinfo in doctors_spec:
+            spec = dinfo["spec"]
+            doc = doctor_models[spec]
+            scenarios = clinical_scenarios[spec]
+
+            # Morning Session Tokens (3 tokens)
+            morning_tokens = [
+                {
+                    "token": 1,
+                    "tier": "regular",
+                    "slot_type": "open",
+                    "patient_idx": (day_offset * 3 + 0) % len(patient_pool),
+                    "status": "completed" if is_today else "waiting",
+                    "anchor_time": None,
+                    "scenario": scenarios[0],
                 },
-                is_processed=True,
-                llm_provider_used="groq",
-            ))
+                {
+                    "token": 2,
+                    "tier": "priority",
+                    "slot_type": "open",
+                    "patient_idx": (day_offset * 3 + 1) % len(patient_pool),
+                    "status": "in_progress" if is_today else "waiting",
+                    "anchor_time": None,
+                    "scenario": scenarios[1],
+                },
+                {
+                    "token": 3,
+                    "tier": "regular",
+                    "slot_type": "anchor",
+                    "patient_idx": (day_offset * 3 + 2) % len(patient_pool),
+                    "status": "waiting",
+                    "anchor_time": time(10, 30),
+                    "scenario": scenarios[2],
+                },
+            ]
+
+            # Evening Session Tokens (2 tokens)
+            evening_tokens = [
+                {
+                    "token": 1,
+                    "tier": "regular",
+                    "slot_type": "open",
+                    "patient_idx": (day_offset * 2 + 3) % len(patient_pool),
+                    "status": "waiting",
+                    "anchor_time": None,
+                    "scenario": scenarios[3],
+                },
+                {
+                    "token": 2,
+                    "tier": "priority",
+                    "slot_type": "anchor",
+                    "patient_idx": (day_offset * 2 + 4) % len(patient_pool),
+                    "status": "waiting",
+                    "anchor_time": time(18, 0),
+                    "scenario": scenarios[1],
+                },
+            ]
+
+            all_sessions = [("morning", morning_tokens), ("evening", evening_tokens)]
+
+            for sess_name, tokens in all_sessions:
+                for tdata in tokens:
+                    pat = patient_pool[tdata["patient_idx"]]
+                    
+                    # Check if token exists
+                    q_res = await db.execute(
+                        select(DoctorQueue).where(
+                            DoctorQueue.doctor_id == doc.id,
+                            DoctorQueue.appointment_date == current_date,
+                            DoctorQueue.session == sess_name,
+                            DoctorQueue.token_number == tdata["token"],
+                        )
+                    )
+                    existing_q = q_res.scalar_one_or_none()
+                    if not existing_q:
+                        q_entry = DoctorQueue(
+                            doctor_id=doc.id,
+                            appointment_date=current_date,
+                            session=sess_name,
+                            token_number=tdata["token"],
+                            display_position=tdata["token"],
+                            patient_id=pat.id,
+                            tier=tdata["tier"],
+                            slot_type=tdata["slot_type"],
+                            anchor_time=tdata["anchor_time"],
+                            status=tdata["status"],
+                            booking_mode_used="advance" if tdata["slot_type"] == "anchor" else "walk_in",
+                            booked_at=datetime.utcnow() - timedelta(days=5-day_offset, hours=2),
+                        )
+                        db.add(q_entry)
+                        await db.flush()
+                        total_tokens_seeded += 1
+
+                        # Attach AI Pre-Visit Symptoms
+                        scen_text, scen_urgency, scen_chief, scen_questions = tdata["scenario"]
+                        db.add(Symptoms(
+                            queue_id=q_entry.id,
+                            symptom_text=scen_text,
+                            urgency_level=scen_urgency,
+                            ai_summary={
+                                "urgency_level": scen_urgency,
+                                "chief_complaint": scen_chief,
+                                "suggested_questions": scen_questions,
+                            },
+                            is_processed=True,
+                            llm_provider_used="groq",
+                        ))
+
+                        # If completed on Day 0, attach PostVisitNotes & Medications
+                        if tdata["status"] == "completed":
+                            note = PostVisitNotes(
+                                queue_id=q_entry.id,
+                                doctor_clinical_notes=f"Consultation completed for {scen_chief}. Patient oriented and vital signs stable. Advised rest, hydration, and structured pharmacotherapy.",
+                                prescription=[
+                                    {"medication_name": "Paracetamol 650mg", "dosage": "1 tablet", "frequency": "twice_daily", "duration_days": 5},
+                                    {"medication_name": "Pantoprazole 40mg", "dosage": "1 tablet before breakfast", "frequency": "once_daily", "duration_days": 7},
+                                ],
+                                patient_friendly_summary=f"You consulted Dr. {doc.specialisation}. Please take your prescribed medicines on time and rest for the next 2-3 days.",
+                                is_processed=True,
+                            )
+                            db.add(note)
+                            await db.flush()
+
+                            db.add(Medication(
+                                post_visit_id=note.id,
+                                medication_name="Paracetamol 650mg",
+                                dosage="1 tablet",
+                                frequency="twice_daily",
+                                duration_days=5,
+                            ))
+                            db.add(Medication(
+                                post_visit_id=note.id,
+                                medication_name="Pantoprazole 40mg",
+                                dosage="1 tablet",
+                                frequency="once_daily",
+                                duration_days=7,
+                            ))
 
     await db.commit()
-    logger.info("Demo clinical test data seeded successfully.")
+    logger.info("Comprehensive 5-day clinical test data seeded successfully (%d tokens across 5 days).", total_tokens_seeded)
 
     return {
-        "message": "Demo data seeded successfully!",
-        "admin_login": {"email": "admin@clinic.com", "password": "Password123!"},
-        "doctor_logins": [
-            {"name": "Dr. Priya Sharma", "specialisation": "Cardiology", "email": "dr.sharma@clinic.com", "password": "Password123!"},
-            {"name": "Dr. Rajesh Mehta", "specialisation": "Neurology", "email": "dr.mehta@clinic.com", "password": "Password123!"},
-            {"name": "Dr. Ananya Kapoor", "specialisation": "Dermatology", "email": "dr.kapoor@clinic.com", "password": "Password123!"},
-            {"name": "Dr. Amit Verma", "specialisation": "General Practice", "email": "dr.verma@clinic.com", "password": "Password123!"},
-            {"name": "Dr. Sunita Gupta", "specialisation": "Orthopedics", "email": "dr.gupta@clinic.com", "password": "Password123!"},
+        "message": f"Successfully seeded 5 days of clinical data ({total_tokens_seeded} queue tokens across 5 doctors)!",
+        "date_range": f"{today} to {today + timedelta(days=4)} (5 consecutive calendar days)",
+        "doctors": [
+            {"id": doctor_models["Cardiology"].id, "name": "Dr. Priya Sharma", "specialisation": "Cardiology", "email": "dr.sharma@clinic.com"},
+            {"id": doctor_models["Neurology"].id, "name": "Dr. Rajesh Mehta", "specialisation": "Neurology", "email": "dr.mehta@clinic.com"},
+            {"id": doctor_models["Dermatology"].id, "name": "Dr. Ananya Kapoor", "specialisation": "Dermatology", "email": "dr.kapoor@clinic.com"},
+            {"id": doctor_models["General Practice"].id, "name": "Dr. Amit Verma", "specialisation": "General Practice", "email": "dr.verma@clinic.com"},
+            {"id": doctor_models["Orthopedics"].id, "name": "Dr. Sunita Gupta", "specialisation": "Orthopedics", "email": "dr.gupta@clinic.com"},
         ],
-        "patient_logins": [
-            {"name": "Rahul Verma", "email": "rahul@example.com", "password": "Password123!"},
-            {"name": "Sneha Patel", "email": "sneha@example.com", "password": "Password123!"},
-            {"name": "Vikram Singh", "email": "vikram@example.com", "password": "Password123!"},
+        "features_ready_to_test": [
+            "Doctor Dashboard: Live queue with Completed, In-Progress, and Waiting tokens on Today",
+            "Doctor Dashboard: Date picker shows pre-loaded queues on Day 1, 2, 3, 4",
+            "Doctor Leave Engine: Call POST /doctors/{id}/leave on Day 3 to test auto-conflict cancellation",
+            "Patient Portal: New bookings on any of the 5 days queue immediately after existing demo tokens",
+            "AI Triage: Every token has pre-calculated clinical triage summaries and diagnostic questions",
+            "Post-Visit Notes: Completed tokens have full digital prescriptions and medication schedules",
         ],
-        "active_queue": "3 pre-loaded tokens with AI Triage for Dr. Priya Sharma (Cardiology) for Today Morning Session",
     }
+
 
 
 @router.post("/notifications/process")
