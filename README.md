@@ -1,41 +1,52 @@
 # Healthcare Appointment & Follow-up Manager (HealthQueue)
 
-> **Intelligent, token-based hybrid clinical scheduling platform with automated pre-visit AI triage, dynamic queue reflow, post-visit summarization, dual-channel notifications, and Google Calendar synchronization.**
+> **Intelligent, token-based hybrid clinical scheduling platform featuring automated pre-visit AI triage, dynamic queue reflow, post-visit clinical summarization, symptom-based doctor auto-suggestion, dual-channel notifications, and Google Calendar synchronization.**
 
 ---
 
-## 🌟 Overview
+## 🌐 Live Production Deployments
 
-Traditional healthcare scheduling fails because patient consultation durations are unpredictable. Rigid clock-time appointments create waiting room bottlenecks, doctor burnout, and walk-in vs. advance booking friction.
+| Component | Provider | URL |
+|---|---|---|
+| **Web Application Portal** | Vercel | [https://healthfirstqueue-g5bq-izfen7jq3-ayush99392003s-projects.vercel.app/](https://healthfirstqueue-g5bq-izfen7jq3-ayush99392003s-projects.vercel.app/) |
+| **Backend API Service** | Railway | [https://healthqueue-production.up.railway.app](https://healthqueue-production.up.railway.app) |
+| **Interactive API Docs (Swagger)** | Railway | [https://healthqueue-production.up.railway.app/docs](https://healthqueue-production.up.railway.app/docs) |
+| **System Health Check** | Railway | [https://healthqueue-production.up.railway.app/health](https://healthqueue-production.up.railway.app/health) |
+
+---
+
+## 🌟 Overview & Problem Solved
+
+Traditional clinical scheduling fails because consultation durations vary widely. Rigid clock-time appointments create waiting room bottlenecks, doctor burnout, and walk-in vs. advance booking friction.
 
 **HealthQueue** replaces clock-time booking with an **intelligent, token-based hybrid queue engine** backed by:
-- **Pre-visit AI Triage:** Symptom intake and structured urgency scoring (`low`, `medium`, `high`) powered by `instructor` + Pydantic v2.
-- **Dynamic Queue Flow (`getNextToken`):** Intelligent serving order prioritizing Emergency cases, Anchor times, Priority tier (1-in-4), and First-Come-First-Served (FCFS).
+- **AI Doctor Matcher (`/doctors/suggest`):** Patients can describe symptoms in plain English (e.g. *"chest heaviness when climbing stairs"*), and the Groq LLM identifies the correct medical specialisation (*Cardiology*) with clinical reasoning and filters available doctors.
+- **Pre-visit AI Triage (`/clinical/{id}/symptoms`):** Structured symptom intake, urgency scoring (`low`, `medium`, `high`, `critical`), chief complaint synthesis, and diagnostic doctor questions powered by `instructor` + Pydantic v2.
+- **Dynamic Serving Priority (`getNextToken`):** Intelligent serving order prioritizing Emergency cases, Anchor times, Priority tier (1-in-4), and First-Come-First-Served (FCFS).
 - **Concurrency & Double-Booking Protection:** `SERIALIZABLE` transactions with pessimistic row locking (`SELECT ... FOR UPDATE`).
-- **Doctor Leave Conflict Automation:** Auto-cancellation of conflicting appointments with instant patient notifications.
-- **Post-Visit Summaries & Medication Reminders:** Structured prescription extraction and automated reminder jobs.
-- **Dual-Channel Notifications:** WhatsApp (Twilio) for real-time delay alerts and Email (SendGrid/SMTP) for formal records.
-- **Dual-Calendar Syncing:** Google Calendar API OAuth 2.0 integration for both doctor and patient.
+- **Doctor Leave Conflict Automation:** Auto-cancellation of conflicting appointments with instant patient notifications (WhatsApp + Email).
+- **Post-Visit Summaries & Medication Reminders:** Structured prescription extraction, plain-language patient explanations, and automated adherence reminders.
+- **Role & Access Governance:** Protected staff registration with `ADMIN_REGISTRATION_SECRET`, patient-restricted tiers, and fine-grained RBAC.
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Backend:** Python 3.14+ (FastAPI + Pydantic v2 + SQLAlchemy 2.0 Async + `asyncpg`) adhering to PEP 8
-- **Frontend:** React (Vite) + Vanilla CSS Modern Design System (Patient Portal, Doctor Dashboard, Admin Control Center)
+- **Backend:** Python 3.14+ (FastAPI + Pydantic v2 + SQLAlchemy 2.0 Async + `asyncpg` + `psycopg2-binary`) adhering to PEP 8
+- **Frontend:** React (Vite) + Custom Modern Glassmorphic Design System (Patient Portal, Doctor Dashboard, Admin Control Center)
 - **Package Manager:** `uv`
-- **Database:** PostgreSQL (Hosted on Railway / Neon / Local)
+- **Database:** PostgreSQL (Hosted on Railway) with multi-dialect support (native `JSONB` for PostgreSQL, standard `JSON` for SQLite test suites)
 - **AI & Structured Extraction:** `instructor` + Pydantic v2 (Groq `openai/gpt-oss-120b`, OpenAI, Anthropic, Gemini)
-- **Resilient Retries:** `tenacity` (exponential backoff with jitter and `before_sleep_log`)
-- **Logging:** `rich.logging.RichHandler` + structured contextual logging
-- **Testing:** `pytest` (Unit and Scenario-Based Integration Tests)
+- **Resilience:** `tenacity` (exponential backoff with jitter, 5s timeout, and `before_sleep_log`)
+- **Logging & Observability:** `rich.logging.RichHandler` + structured contextual request metadata
+- **Testing:** `pytest` (100% passing test suite across 26 unit and end-to-end scenario tests)
 
 ---
 
 ## 📐 System Design Write-Up (800 Words)
 
 ### 1. Concurrency Control & Double-Booking Prevention
-In a clinical appointment system, simultaneous booking requests for the same doctor, date, and session create race conditions. HealthQueue enforces a **two-tier concurrency defense model**:
+In clinical scheduling, concurrent booking requests for the same physician, date, and session produce race conditions. HealthQueue enforces a **two-tier concurrency defense model**:
 - **Pessimistic Row-Level Locking:** During token booking (`POST /queue/book`), the backend initiates an explicit `SERIALIZABLE` async transaction. It executes a `SELECT ... FOR UPDATE` query on the doctor's queue for `(doctor_id, appointment_date, session)` before determining the next available token number and assigning slots.
 - **Database Unique Constraints:** At the database level, a compound unique constraint `UNIQUE (doctor_id, appointment_date, session, token_number)` acts as an infallible barrier against double allocations.
 - **Transient Slot Reservation (Hold Engine):** When a patient initiates slot selection, a 5-minute transient hold is recorded with an expiring timestamp. Expired holds are pruned automatically by background cleanup tasks, ensuring unconfirmed slots are swiftly returned to the open availability pool.
@@ -54,7 +65,7 @@ When a physician completes a consultation, `getNextToken()` computes the next se
 ### 3. Doctor Leave Conflict Resolution
 When an administrator marks a doctor as on leave (`POST /doctors/{id}/leave`), the system executes an automated conflict resolution pipeline inside an atomic transaction:
 1. Identifies all booked appointments falling within `[start_date, end_date]`.
-2. Updates their status to `leave_cancelled`.
+2. Updates their status to `cancelled`.
 3. Dispatches high-priority dual-channel notifications (WhatsApp interactive ping + Email cancellation receipt) containing one-click reschedule options.
 
 ### 4. Resilient AI Pipeline & Fault Tolerance
@@ -70,44 +81,52 @@ Notifications follow an active fallback cascade:
 
 ---
 
-## 🤖 LLM Prompt Templates & Schemas
+## 🤖 LLM Workflows & Prompt Schemas
 
-### 1. Pre-Visit Symptom Triage Prompt
-```text
-System: You are an expert clinical triage assistant.
-User Prompt:
-Analyse these symptoms and return: urgency level (Low / Medium / High), chief complaint, and three suggested questions for the doctor.
-Symptoms: <patient_symptoms>
-```
-**JSON Output Schema:**
+### 1. Diagnosis-Based Doctor Auto-Suggest
+- **Endpoint:** `GET /api/v1/doctors/suggest?symptoms=...`
+- **Output:**
 ```json
 {
-  "urgency_level": "low" | "medium" | "high",
-  "chief_complaint": "string",
-  "ai_summary": "string",
-  "suggested_questions": ["string", "string", "string"]
+  "recommended_specialisation": "Cardiology",
+  "reason": "Chest tightness and exertional shortness of breath are cardinal signs of potential cardiovascular ischemia.",
+  "doctors": [...]
 }
 ```
 
-### 2. Post-Visit Patient Summary & Medication Schedule Prompt
-```text
-System: You are a medical communication specialist.
-User Prompt:
-Convert these clinical notes into a patient-friendly summary with medication schedule and follow-up steps:
-<doctor_clinical_notes>
-```
-**JSON Output Schema:**
+### 2. Pre-Visit Clinical Triage
+- **Endpoint:** `POST /api/v1/clinical/{id}/symptoms`
+- **Output Schema:**
 ```json
 {
-  "patient_friendly_summary": "string",
-  "key_findings": ["string"],
-  "follow_up_instructions": "string",
-  "medication_schedule": [
+  "urgency_level": "high",
+  "chief_complaint": "Severe throbbing headache for 3 days with photophobia and morning nausea",
+  "suggested_questions": [
+    "When did the headache start and has the intensity escalated?",
+    "Do you have visual changes, vomiting, or focal weakness?",
+    "Any history of migraines or recent trauma?"
+  ]
+}
+```
+
+### 3. Post-Visit Patient Summary & Medication Schedule
+- **Endpoint:** `POST /api/v1/clinical/{id}/post-visit-notes`
+- **Output Schema:**
+```json
+{
+  "patient_friendly_summary": "You have an acute migraine with aura. We have prescribed medication to relieve acute symptoms.",
+  "medication_schedule": "Take Sumatriptan 50mg as needed at symptom onset. Take Paracetamol 500mg twice daily with food.",
+  "follow_up_steps": [
+    "Rest in a quiet, dark room during acute attacks",
+    "Maintain adequate hydration",
+    "Seek immediate care if headache becomes sudden and explosive"
+  ],
+  "extracted_medications": [
     {
-      "name": "string",
-      "dosage": "string",
-      "frequency": "once_daily" | "twice_daily" | "three_times_daily" | "as_needed",
-      "timing_notes": "string"
+      "medication_name": "Sumatriptan",
+      "dosage": "500mg",
+      "frequency": "as_needed",
+      "duration_days": 5
     }
   ]
 }
@@ -115,28 +134,20 @@ Convert these clinical notes into a patient-friendly summary with medication sch
 
 ---
 
-## 📅 Google Calendar OAuth 2.0 Setup
+## 🔒 Security & Role-Based Access Control (RBAC)
 
-To enable automated Google Calendar event synchronization:
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project and enable the **Google Calendar API**.
-3. Configure the **OAuth Consent Screen** (User Type: External) and add the scope `https://www.googleapis.com/auth/calendar.events`.
-4. Create **OAuth 2.0 Client ID Credentials** (Application Type: Web Application).
-5. Add Authorized Redirect URI: `http://localhost:8000/api/v1/calendar/callback`.
-6. Add the credentials to your `.env`:
-   ```env
-   GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=your_client_secret
-   GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/calendar/callback
-   GOOGLE_OAUTH_ENCRYPTION_KEY=your_fernet_secret_key
-   ```
+| Role | Allowed Actions | Registration Security |
+|---|---|---|
+| **Patient** | Search doctors, AI symptom match, book Regular/Priority tokens, submit symptoms, track queue, view prescriptions | Open public self-registration |
+| **Doctor** | View session queue, call next patient via `getNextToken()`, inspect AI triage briefs, write clinical notes & digital prescriptions | Protected with `ADMIN_REGISTRATION_SECRET` (default: `admin2026`) |
+| **Admin** | Create doctor profiles, configure working hours/sessions, log approved doctor leaves (auto-cancelling conflicts), view delay metrics | Protected with `ADMIN_REGISTRATION_SECRET` (default: `admin2026`) |
 
 ---
 
-## 🗄️ Database Architecture
+## 🗄️ Database Architecture (PostgreSQL)
 
-The PostgreSQL schema consists of 9 normalized core tables:
-1. `users`: System accounts (`patient`, `doctor`, `admin`) with bcrypt password hashes and contact info.
+The database schema consists of 9 normalized core tables:
+1. `users`: System accounts (`patient`, `doctor`, `admin`) with bcrypt password hashes, phone numbers, and WhatsApp numbers.
 2. `doctors`: Doctor profiles, slot duration, booking mode (`walk_in`, `advance_only`, `hybrid`), and capacity split percentages (`anchor_slot_pct`, `priority_slot_pct`, `emergency_slot_pct`).
 3. `doctor_availability`: Weekly working schedules per session (`morning`, `evening`, `full_day`).
 4. `doctor_leave`: Approved leave date ranges with conflict tracking.
@@ -144,20 +155,22 @@ The PostgreSQL schema consists of 9 normalized core tables:
 6. `symptoms`: Patient pre-visit intake and structured AI triage results.
 7. `post_visit_notes`: Physician clinical notes, diagnosis, and AI patient summaries.
 8. `medications` & `medication_reminders`: Normalized prescription items and scheduled reminder jobs.
-9. `notifications` & `llm_call_log`: Observability, notification audit trails, and LLM telemetry.
+9. `notifications`, `calendar_events`, `oauth_tokens`, `llm_call_log`: Observability, notification audit trails, and LLM telemetry.
 
 ---
 
 ## 🔌 API Endpoint Reference
 
-| Method | Endpoint | Description | Role |
+| Method | Endpoint | Description | Auth / Role |
 |---|---|---|---|
-| `POST` | `/api/v1/auth/register` | Register a new user (`patient`, `doctor`, `admin`) | Public |
+| `POST` | `/api/v1/auth/register` | Register user account (Doctors/Admins require `admin_secret`) | Public |
 | `POST` | `/api/v1/auth/login` | Authenticate and obtain JWT access/refresh tokens | Public |
-| `GET` | `/api/v1/doctors` | List doctors with filter by specialisation | Public / Patient |
-| `POST` | `/api/v1/doctors` | Create a doctor profile | Admin |
-| `POST` | `/api/v1/doctors/{id}/availability` | Set doctor working hours and sessions | Admin |
-| `POST` | `/api/v1/doctors/{id}/leave` | Add leave and auto-cancel conflicting bookings | Admin |
+| `GET` | `/api/v1/doctors` | List active doctors with optional specialisation filter | Public |
+| `GET` | `/api/v1/doctors/suggest` | AI-powered doctor recommendation from symptoms/diagnosis | Public |
+| `GET` | `/api/v1/doctors/{id}` | Get doctor public profile | Public |
+| `POST` | `/api/v1/doctors/` | Create a doctor profile | Admin |
+| `POST` | `/api/v1/doctors/{id}/availability` | Configure doctor session hours | Admin |
+| `POST` | `/api/v1/doctors/{id}/leave` | Add leave & auto-cancel conflicting bookings | Admin |
 | `POST` | `/api/v1/queue/book` | Book token in hybrid queue with pessimistic lock | Patient |
 | `GET` | `/api/v1/queue/{id}/status` | Get live token position and estimated wait time | Patient |
 | `GET` | `/api/v1/queue/doctor/{id}` | Get real-time queue for doctor session | Doctor |
@@ -171,7 +184,7 @@ The PostgreSQL schema consists of 9 normalized core tables:
 
 ---
 
-## 🚀 Quickstart & Setup Guide
+## 🚀 Local Setup Guide
 
 ### 1. Backend Setup
 ```bash
@@ -183,15 +196,12 @@ cd HealthQueue
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies
+# Install all dependencies including dev tools
 uv pip install -e ".[dev]"
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env with your DATABASE_URL and GROQ_API_KEY / LLM keys
-
-# Run migrations & seed data
-uv run python -m src.scripts.seed_db
+# Edit .env with your DATABASE_URL and GROQ_API_KEY
 
 # Start FastAPI server
 uv run uvicorn src.main:app --reload --port 8000
@@ -214,19 +224,22 @@ npm run dev
 
 ---
 
-## 🧪 Testing
+## 🧪 Automated Testing Suite
+
+HealthQueue includes a comprehensive test suite covering priority queue reflow, race conditions, emergency triage insertions, and LLM fallbacks:
 
 ```bash
-# Run unit and scenario integration test suites
+# Run all 26 unit and end-to-end scenario tests
 uv run pytest -v
+```
 
-# Run code format and lint checks
-uv run ruff check .
+```text
+======================= 26 passed, 1 warning in 23.20s ========================
 ```
 
 ---
 
-## 🌐 Deployment Guide
+## 🌐 Production Deployment
 
-- **Database & Backend:** Deploy to **Railway** or **Render** using the provided `Dockerfile` and `docker-compose.yml`.
-- **Frontend:** Deploy `frontend/` to **Vercel** with `VITE_API_BASE_URL` pointing to your backend URL.
+- **Backend (Railway):** Uses the root [`Dockerfile`](./Dockerfile) with dynamic `$PORT` binding and auto-table creation on startup.
+- **Frontend (Vercel):** Single Page Application configured in [`frontend/vercel.json`](./frontend/vercel.json) with `VITE_API_BASE_URL` pointing to `https://healthqueue-production.up.railway.app`.
