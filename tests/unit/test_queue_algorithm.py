@@ -46,24 +46,25 @@ async def test_emergency_served_before_regular(session: AsyncSession, doctor, pa
 @pytest.mark.asyncio
 async def test_anchor_slot_served_when_time_arrived(session: AsyncSession, doctor, patient_user):
     """Anchor slot must be pulled forward when its anchor_time is in the past."""
+    today = datetime.utcnow().date()
     past_anchor_time = (datetime.utcnow() - timedelta(minutes=5)).time()
 
     anchor = DoctorQueue(
-        doctor_id=doctor.id, appointment_date=TEST_DATE, session=SESSION,
+        doctor_id=doctor.id, appointment_date=today, session=SESSION,
         token_number=1, patient_id=patient_user.id, tier="regular",
         slot_type="anchor", anchor_time=past_anchor_time, status="waiting",
-        booking_mode_used="advance", booked_at=datetime(2026, 9, 1, 9, 0),
+        booking_mode_used="advance", booked_at=datetime.utcnow() - timedelta(minutes=30),
     )
     regular = DoctorQueue(
-        doctor_id=doctor.id, appointment_date=TEST_DATE, session=SESSION,
+        doctor_id=doctor.id, appointment_date=today, session=SESSION,
         token_number=2, patient_id=patient_user.id, tier="regular",
         slot_type="open", status="waiting", booking_mode_used="advance",
-        booked_at=datetime(2026, 9, 1, 8, 0),  # booked much earlier
+        booked_at=datetime.utcnow() - timedelta(hours=1),  # booked earlier
     )
     session.add_all([anchor, regular])
     await session.flush()
 
-    next_token = await get_next_token(session, doctor.id, TEST_DATE, SESSION)
+    next_token = await get_next_token(session, doctor.id, today, SESSION)
 
     assert next_token is not None
     assert next_token.slot_type == "anchor"
@@ -72,24 +73,25 @@ async def test_anchor_slot_served_when_time_arrived(session: AsyncSession, docto
 @pytest.mark.asyncio
 async def test_future_anchor_slot_not_served_early(session: AsyncSession, doctor, patient_user):
     """Anchor slot must NOT be served before its anchor_time (doctor running ahead)."""
+    today = datetime.utcnow().date()
     future_anchor_time = (datetime.utcnow() + timedelta(hours=2)).time()
 
     anchor = DoctorQueue(
-        doctor_id=doctor.id, appointment_date=TEST_DATE, session=SESSION,
+        doctor_id=doctor.id, appointment_date=today, session=SESSION,
         token_number=1, patient_id=patient_user.id, tier="regular",
         slot_type="anchor", anchor_time=future_anchor_time, status="waiting",
-        booking_mode_used="advance", booked_at=datetime(2026, 9, 1, 9, 0),
+        booking_mode_used="advance", booked_at=datetime.utcnow() - timedelta(minutes=30),
     )
     regular = DoctorQueue(
-        doctor_id=doctor.id, appointment_date=TEST_DATE, session=SESSION,
+        doctor_id=doctor.id, appointment_date=today, session=SESSION,
         token_number=2, patient_id=patient_user.id, tier="regular",
         slot_type="open", status="waiting", booking_mode_used="advance",
-        booked_at=datetime(2026, 9, 1, 8, 0),
+        booked_at=datetime.utcnow() - timedelta(hours=1),
     )
     session.add_all([anchor, regular])
     await session.flush()
 
-    next_token = await get_next_token(session, doctor.id, TEST_DATE, SESSION)
+    next_token = await get_next_token(session, doctor.id, today, SESSION)
 
     # Should skip future anchor and serve regular FCFS instead
     assert next_token is not None

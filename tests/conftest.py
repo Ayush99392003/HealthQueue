@@ -35,7 +35,7 @@ def event_loop():
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
     """Create tables once per test session, drop after."""
-    engine = create_async_engine(str(settings.database_url), echo=False)
+    engine = create_async_engine("sqlite+aiosqlite:///./test.db", echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

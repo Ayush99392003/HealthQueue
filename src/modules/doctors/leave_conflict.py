@@ -119,6 +119,8 @@ async def resolve_leave_conflicts(
         notifications_created, doctor_id,
     )
 
+    await session.flush()
+
     # Return the list of cancelled entries (caller may use for further processing)
     return list(affected_entries)
 

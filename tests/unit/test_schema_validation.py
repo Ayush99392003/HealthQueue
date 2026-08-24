@@ -86,7 +86,6 @@ class TestPostVisitSummary:
                 )
             ],
         )
-        assert summary.is_processed is False or True  # No is_processed field in schema
         assert len(summary.extracted_medications) == 1
 
     def test_default_extracted_medications_empty(self):

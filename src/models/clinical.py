@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     Time,
@@ -18,6 +19,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin
+
+# Use native JSONB on PostgreSQL and standard JSON on SQLite (for test suites)
+JSON_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
 class Symptoms(Base, TimestampMixin):
@@ -37,7 +41,7 @@ class Symptoms(Base, TimestampMixin):
     symptom_text: Mapped[str] = mapped_column(Text, nullable=False)
 
     # AI extraction results — null if LLM failed
-    ai_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ai_summary: Mapped[dict | None] = mapped_column(JSON_TYPE, nullable=True)
     urgency_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     llm_provider_used: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -62,7 +66,7 @@ class PostVisitNotes(Base, TimestampMixin):
         Integer, ForeignKey("doctor_queue.id"), unique=True, nullable=False
     )
     doctor_clinical_notes: Mapped[str] = mapped_column(Text, nullable=False)
-    prescription: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prescription: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False)
 
     # AI-generated patient-friendly content — null if LLM failed
     patient_friendly_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
