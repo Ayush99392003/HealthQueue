@@ -71,10 +71,14 @@ class NextTokenResponse(BaseModel):
     tier: str | None
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+from src.core.rate_limiter import rate_limit
 
-
-@router.post("/book", status_code=status.HTTP_201_CREATED, response_model=BookingResponse)
+@router.post(
+    "/book",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BookingResponse,
+    dependencies=[Depends(rate_limit(max_requests=50, window_seconds=60))],
+)
 async def book_appointment(
     body: BookingRequest,
     current_user: User = Depends(get_current_user),

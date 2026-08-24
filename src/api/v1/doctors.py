@@ -233,14 +233,17 @@ async def add_leave(
     doctor_id: int,
     body: LeaveRequest,
     session: AsyncSession = Depends(get_db_session),
-    _admin: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "doctor")),
 ) -> dict:
     """
-    Admin: Mark a doctor on leave and auto-cancel all conflicting appointments.
+    Admin or Doctor: Mark a doctor on leave and auto-cancel all conflicting appointments.
 
     After cancellation, leave_cancellation notifications are queued for every
     affected patient (WhatsApp primary, Email as formal record).
     """
+    if current_user.role == "doctor" and current_user.id != doctor_id:
+        from src.core.exceptions import ForbiddenError
+        raise ForbiddenError("Doctors can only record leave for their own schedule")
     async with session.begin():
         leave_record = await doctor_service.add_leave(
             session,

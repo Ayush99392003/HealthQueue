@@ -414,3 +414,14 @@ async def seed_demo_data(
         "active_queue": "3 pre-loaded tokens with AI Triage for Dr. Priya Sharma (Cardiology) for Today Morning Session",
     }
 
+
+@router.post("/notifications/process")
+async def trigger_notification_worker(
+    _admin: User = Depends(require_role("admin")),
+) -> dict:
+    """Admin: Trigger background notification dispatch worker immediately."""
+    from src.modules.notifications.worker import process_pending_notifications
+    stats = await process_pending_notifications(batch_size=50)
+    return {"message": "Notification batch processed", "stats": stats}
+
+
