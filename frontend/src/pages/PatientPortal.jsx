@@ -8,9 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
 
 const TIERS = [
-  { id: 'regular', label: 'Regular', desc: 'Standard appointment', color: 'regular' },
-  { id: 'priority', label: 'Priority', desc: 'Faster access', color: 'priority' },
-  { id: 'emergency', label: 'Emergency', desc: 'Immediate attention', color: 'emergency' },
+  { id: 'regular', label: 'Regular', desc: 'Standard appointment (FCFS)', color: 'regular' },
+  { id: 'priority', label: 'Priority', desc: 'Priority access for seniors & urgent cases', color: 'priority' },
 ];
 
 const SESSIONS = ['morning', 'evening'];
@@ -24,6 +23,9 @@ export default function PatientPortal({ onToast }) {
   const [doctors, setDoctors] = useState([]);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
   const [search, setSearch] = useState('');
+  const [aiSuggestPrompt, setAiSuggestPrompt] = useState('');
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+  const [aiRecommendation, setAiRecommendation] = useState(null);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [bookingForm, setBookingForm] = useState({ date: TODAY, session: 'morning', tier: 'regular' });
   const [booking, setBooking] = useState(false);
@@ -125,6 +127,24 @@ export default function PatientPortal({ onToast }) {
       .finally(() => setTrackLoading(false));
   };
 
+  const handleAiSuggest = async () => {
+    if (!aiSuggestPrompt.trim()) {
+      onToast('warning', 'Describe symptoms', 'Please enter your symptoms or health concern.');
+      return;
+    }
+    setAiSuggesting(true);
+    try {
+      const res = await api.doctors.suggestBySymptoms(aiSuggestPrompt);
+      setAiRecommendation(res);
+      setDoctors(res.doctors || []);
+      onToast('success', `Recommended: ${res.recommended_specialisation}`, res.reason);
+    } catch (err) {
+      onToast('error', 'AI suggestion failed', err.message);
+    } finally {
+      setAiSuggesting(false);
+    }
+  };
+
   const filteredDoctors = doctors.filter(d =>
     !search || d.specialisation?.toLowerCase().includes(search.toLowerCase())
   );
@@ -158,12 +178,44 @@ export default function PatientPortal({ onToast }) {
         <div className="grid-main-side">
           {/* Left: Doctor search */}
           <div className="flex flex-col gap-4">
+            {/* AI Auto-Suggest by Symptoms */}
+            <div className="card card-pad" style={{ background: 'var(--card-bg-glass, var(--bg-card))', border: '1px solid var(--primary-border, var(--border-color))' }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Activity size={16} color="var(--primary)" />
+                <span className="font-600 text-sm">AI Doctor Matcher (By Symptoms / Diagnosis)</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  className="form-input"
+                  style={{ margin: 0 }}
+                  placeholder="e.g. chest heaviness, skin rash with itching, migraine..."
+                  value={aiSuggestPrompt}
+                  onChange={e => setAiSuggestPrompt(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAiSuggest()}
+                />
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={handleAiSuggest}
+                  disabled={aiSuggesting}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {aiSuggesting ? <><span className="spinner spinner-sm" /> Matching…</> : 'AI Match'}
+                </button>
+              </div>
+              {aiRecommendation && (
+                <div className="mt-3 p-2 rounded text-xs" style={{ background: 'rgba(59, 130, 246, 0.1)', borderLeft: '3px solid #3b82f6' }}>
+                  <strong>Recommended: {aiRecommendation.recommended_specialisation}</strong> — {aiRecommendation.reason}
+                </div>
+              )}
+            </div>
+
             <div className="card card-pad">
               <div className="flex items-center gap-3 mb-4">
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   className="form-input"
-                  placeholder="Search by specialisation…"
+                  placeholder="Or filter by doctor specialisation directly…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   style={{ margin: 0 }}
@@ -175,7 +227,7 @@ export default function PatientPortal({ onToast }) {
                 <div className="empty-state">
                   <div className="empty-state-icon"><Search size={32} /></div>
                   <h3>No doctors found</h3>
-                  <p>Try a different specialisation</p>
+                  <p>Try a different search or click AI Match</p>
                 </div>
               ) : (
                 <div className="grid-2">

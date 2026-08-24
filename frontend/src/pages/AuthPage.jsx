@@ -170,6 +170,22 @@ export default function AuthPage({ onToast }) {
               </div>
             </div>
 
+            {/* Staff Passcode for Admin / Doctor roles */}
+            {(regForm.role === 'admin' || regForm.role === 'doctor') && (
+              <div className="form-group">
+                <label className="form-label">Staff Security Passcode (Default: admin2026)</label>
+                <input
+                  className="form-input"
+                  type="password"
+                  required
+                  value={regForm.admin_secret || ''}
+                  onChange={(e) => setRegForm((p) => ({ ...p, admin_secret: e.target.value }))}
+                  placeholder="Enter staff security passcode"
+                  autoComplete="off"
+                />
+              </div>
+            )}
+
             {regError && <div className="form-error">{regError}</div>}
             <button id="register-submit" className="btn btn-primary btn-lg w-full" type="submit" disabled={loading}>
               {loading ? <><span className="spinner spinner-sm" /> Creating account…</> : 'Create Account'}
