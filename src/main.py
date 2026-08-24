@@ -82,7 +82,7 @@ register_exception_handlers(app)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-from src.api.v1 import admin, auth, clinical, doctors  # noqa: E402
+from src.api.v1 import admin, auth, calendar as calendar_router, clinical, doctors  # noqa: E402
 from src.api.v1 import queue as queue_router  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
@@ -90,6 +90,7 @@ app.include_router(doctors.router, prefix="/api/v1/doctors", tags=["Doctors"])
 app.include_router(queue_router.router, prefix="/api/v1/queue", tags=["Queue"])
 app.include_router(clinical.router, prefix="/api/v1/clinical", tags=["Clinical"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(calendar_router.router, prefix="/api/v1/calendar", tags=["Calendar"])
 
 
 # ── Health Check ──────────────────────────────────────────────────────────────

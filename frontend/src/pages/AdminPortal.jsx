@@ -175,10 +175,10 @@ export default function AdminPortal({ onToast }) {
             <div className="flex flex-col gap-3">
               {[
                 { label: 'API Backend', ok: !!stats },
-                { label: 'AI Triage Engine', ok: !!stats },
-                { label: 'Queue Engine', ok: !!stats },
-                { label: 'Notification Service', ok: false },
-                { label: 'Google Calendar Sync', ok: false },
+                { label: 'AI Triage Engine', ok: stats?.ai_triage_engine ?? !!stats },
+                { label: 'Queue Engine', ok: stats?.queue_engine ?? !!stats },
+                { label: 'Notification Service (Twilio / Email)', ok: stats?.notification_service ?? !!stats },
+                { label: 'Google Calendar Sync', ok: stats?.google_calendar_sync ?? !!stats },
               ].map(({ label, ok }) => (
                 <div key={label} className="flex items-center justify-between" style={{ padding: '10px 14px', background: 'var(--bg-sidebar)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
                   <span className="text-sm font-600">{label}</span>

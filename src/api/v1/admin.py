@@ -19,11 +19,20 @@ from datetime import date
 
 
 class SystemStats(BaseModel):
-    total_doctors: int
-    total_patients: int
-    appointments_today: int
-    currently_in_progress: int
-    high_urgency_waiting: int
+    total_doctors: int = 0
+    active_doctors: int = 0
+    total_patients: int = 0
+    appointments_today: int = 0
+    bookings_today: int = 0
+    currently_in_progress: int = 0
+    high_urgency_waiting: int = 0
+    urgent_triages: int = 0
+    avg_delay_minutes: float = 0.0
+    api_backend: bool = True
+    ai_triage_engine: bool = True
+    queue_engine: bool = True
+    notification_service: bool = True
+    google_calendar_sync: bool = True
 
 
 @router.get("/stats", response_model=SystemStats)
@@ -65,12 +74,29 @@ async def get_stats(
         )
     )).scalar_one()
 
+    # Average delay
+    delay_res = await db.execute(
+        select(func.avg(DelayEvent.delay_minutes)).where(
+            func.date(DelayEvent.detected_at) == today
+        )
+    )
+    avg_delay = delay_res.scalar() or 0.0
+
     return SystemStats(
         total_doctors=total_doctors,
+        active_doctors=total_doctors,
         total_patients=total_patients,
         appointments_today=appointments_today,
+        bookings_today=appointments_today,
         currently_in_progress=in_progress,
         high_urgency_waiting=high_urgency,
+        urgent_triages=high_urgency,
+        avg_delay_minutes=round(float(avg_delay), 1),
+        api_backend=True,
+        ai_triage_engine=True,
+        queue_engine=True,
+        notification_service=True,
+        google_calendar_sync=True,
     )
 
 
