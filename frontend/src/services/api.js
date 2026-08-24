@@ -10,8 +10,12 @@ function getBaseUrl() {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
   const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('hq_api_url') : null;
   const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  const raw = storedUrl || envUrl || (isLocal ? '' : PROD_BACKEND);
+  let raw = storedUrl || envUrl || (isLocal ? '' : PROD_BACKEND);
   if (raw) {
+    raw = raw.trim();
+    if (!raw.startsWith('http://') && !raw.startsWith('https://') && !raw.startsWith('/')) {
+      raw = `https://${raw}`;
+    }
     const clean = raw.replace(/\/+$/, '');
     return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
   }
