@@ -1,0 +1,85 @@
+/**
+ * Centralized API service.
+ * Uses /api prefix (proxied by Vite to http://127.0.0.1:8000 in dev).
+ * Attaches JWT Bearer token automatically from localStorage.
+ */
+
+const BASE = '/api/v1';
+
+function getToken() {
+  return localStorage.getItem('hq_token') || '';
+}
+
+async function request(method, path, body = null, auth = true) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth) {
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const config = { method, headers };
+  if (body !== null) config.body = JSON.stringify(body);
+
+  const res = await fetch(`${BASE}${path}`, config);
+
+  if (res.status === 204) return null;
+
+  const data = await res.json().catch(() => ({ detail: res.statusText }));
+  if (!res.ok) {
+    const msg = data?.detail || JSON.stringify(data);
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return data;
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+export const api = {
+  auth: {
+    login: (email, password) =>
+      request('POST', '/auth/login', { email, password }, false),
+    register: (payload) =>
+      request('POST', '/auth/register', payload, false),
+  },
+
+  // ── Doctors ────────────────────────────────────────────────────────────────
+  doctors: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request('GET', `/doctors${q ? '?' + q : ''}`);
+    },
+    get: (id) => request('GET', `/doctors/${id}`),
+    create: (payload) => request('POST', '/doctors/', payload),
+    setAvailability: (id, payload) => request('POST', `/doctors/${id}/availability`, payload),
+    addLeave: (id, payload) => request('POST', `/doctors/${id}/leave`, payload),
+  },
+
+  // ── Queue ──────────────────────────────────────────────────────────────────
+  queue: {
+    book: (payload) => request('POST', '/queue/book', payload),
+    status: (queueId) => request('GET', `/queue/${queueId}/status`),
+    list: (doctorId, date) => request('GET', `/queue/doctor/${doctorId}?appointment_date=${date}`),
+    callNext: (doctorId, session) =>
+      request('POST', `/queue/doctor/${doctorId}/call-next`, { session }),
+    complete: (queueId) => request('POST', `/queue/${queueId}/complete`),
+    escalate: (queueId, tier) => request('POST', `/queue/${queueId}/escalate`, { tier }),
+  },
+
+  // ── Clinical ───────────────────────────────────────────────────────────────
+  clinical: {
+    submitSymptoms: (queueId, symptomText) =>
+      request('POST', `/clinical/${queueId}/symptoms`, { symptom_text: symptomText }),
+    getSymptoms: (queueId) => request('GET', `/clinical/${queueId}/symptoms`),
+    submitNotes: (queueId, payload) =>
+      request('POST', `/clinical/${queueId}/post-visit-notes`, payload),
+    getNotes: (queueId) => request('GET', `/clinical/${queueId}/post-visit-notes`),
+  },
+
+  // ── Admin ──────────────────────────────────────────────────────────────────
+  admin: {
+    dashboard: () => request('GET', '/admin/dashboard'),
+    delays: () => request('GET', '/admin/delays'),
+  },
+
+  // ── Health check ───────────────────────────────────────────────────────────
+  health: () => fetch('/health').then((r) => r.json()),
+};
