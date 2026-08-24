@@ -34,7 +34,10 @@ export default function PatientPortal({ onToast }) {
   });
   const [symptomText, setSymptomText] = useState('');
   const [symptomSending, setSymptomSending] = useState(false);
-  const [symptomDone, setSymptomDone] = useState(false);
+  const [triageData, setTriageData] = useState(null);
+  const [loadingTriage, setLoadingTriage] = useState(false);
+  const [isEditingSymptoms, setIsEditingSymptoms] = useState(false);
+  const [bookingSymptom, setBookingSymptom] = useState('');
 
   // --- Live Tracker tab ---
   const [queueStatus, setQueueStatus] = useState(null);
@@ -74,6 +77,20 @@ export default function PatientPortal({ onToast }) {
     return () => clearInterval(trackInterval.current);
   }, [activeTab, bookedEntry?.id]);
 
+  // Fetch symptoms / AI triage when on symptoms tab
+  useEffect(() => {
+    if (activeTab === 'symptoms' && bookedEntry?.id) {
+      setLoadingTriage(true);
+      api.clinical.getSymptoms(bookedEntry.id)
+        .then(data => {
+          setTriageData(data);
+          if (data?.symptom_text) setSymptomText(data.symptom_text);
+        })
+        .catch(() => setTriageData(null))
+        .finally(() => setLoadingTriage(false));
+    }
+  }, [activeTab, bookedEntry?.id]);
+
   // Fetch post-visit records
   useEffect(() => {
     if (activeTab === 'records' && bookedEntry?.id) {
@@ -111,6 +128,13 @@ export default function PatientPortal({ onToast }) {
       localStorage.setItem('hq_my_token', JSON.stringify(entry));
       setBookedEntry(entry);
       onToast('success', 'Token booked!', `Your token #${entry.token_number} is confirmed.`);
+
+      if (bookingSymptom.trim() && entry.id) {
+        api.clinical.submitSymptoms(entry.id, bookingSymptom.trim())
+          .then(() => setSymptomText(bookingSymptom.trim()))
+          .catch(() => {});
+      }
+
       setActiveTab('track');
     } catch (err) {
       onToast('error', 'Booking failed', err.message);
@@ -119,13 +143,31 @@ export default function PatientPortal({ onToast }) {
     }
   };
 
+  const pollTriageResult = async (queueId, attempts = 4) => {
+    for (let i = 0; i < attempts; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const res = await api.clinical.getSymptoms(queueId);
+        if (res && res.is_processed) {
+          setTriageData(res);
+          return res;
+        }
+      } catch {}
+    }
+    try {
+      const fallback = await api.clinical.getSymptoms(queueId);
+      setTriageData(fallback);
+    } catch {}
+  };
+
   const handleSymptomSubmit = async () => {
     if (!symptomText.trim()) { onToast('warning', 'Enter symptoms', 'Please describe your symptoms.'); return; }
     setSymptomSending(true);
     try {
       await api.clinical.submitSymptoms(bookedEntry.id, symptomText);
-      setSymptomDone(true);
-      onToast('success', 'Symptoms submitted', 'Our AI will prepare a triage brief for your doctor.');
+      setIsEditingSymptoms(false);
+      onToast('success', 'Symptoms submitted', 'AI is analyzing your symptoms and preparing a triage brief.');
+      await pollTriageResult(bookedEntry.id);
     } catch (err) {
       onToast('error', 'Submission failed', err.message);
     } finally {
@@ -317,6 +359,17 @@ export default function PatientPortal({ onToast }) {
                   </div>
                 </div>
 
+                <div className="form-group">
+                  <label className="form-label">Symptoms / Reason for Visit <span className="text-muted">(Optional)</span></label>
+                  <input
+                    id="book-symptoms"
+                    className="form-input"
+                    placeholder="e.g. Severe headache for 2 days, fever, nausea…"
+                    value={bookingSymptom}
+                    onChange={e => setBookingSymptom(e.target.value)}
+                  />
+                </div>
+
                 {selectedDoctor && (
                   <div className="info-banner success">
                     <CheckCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -433,7 +486,7 @@ export default function PatientPortal({ onToast }) {
 
       {/* ===== SYMPTOM INTAKE TAB ===== */}
       {activeTab === 'symptoms' && (
-        <div style={{ maxWidth: 600, margin: '0 auto' }}>
+        <div style={{ maxWidth: 640, margin: '0 auto' }}>
           {!bookedEntry ? (
             <div className="empty-state">
               <div className="empty-state-icon"><FileText size={48} /></div>
@@ -441,12 +494,62 @@ export default function PatientPortal({ onToast }) {
               <p>You need to book an appointment before submitting symptoms.</p>
               <button className="btn btn-primary mt-4" onClick={() => setActiveTab('book')}>Book Now</button>
             </div>
-          ) : symptomDone ? (
+          ) : loadingTriage ? (
             <div className="card card-pad" style={{ textAlign: 'center', padding: 48 }}>
-              <CheckCircle size={48} color="var(--success)" style={{ margin: '0 auto 16px' }} />
-              <h3 className="font-700" style={{ fontSize: 'var(--text-xl)' }}>Symptoms Submitted</h3>
-              <p className="text-secondary mt-2">Our AI has processed your symptoms and prepared a clinical triage brief for your doctor.</p>
-              <button className="btn btn-secondary mt-4" onClick={() => setActiveTab('track')}>View Queue Status</button>
+              <span className="spinner" style={{ margin: '0 auto 16px', display: 'block' }} />
+              <p className="text-secondary">Loading AI pre-visit triage analysis…</p>
+            </div>
+          ) : triageData && !isEditingSymptoms ? (
+            <div className="card card-pad flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-700" style={{ fontSize: 'var(--text-lg)' }}>AI Pre-Visit Triage Report</h3>
+                  <p className="text-xs text-muted mt-1">Prepared by AI Assistant for your Doctor (Token #{bookedEntry.token_number})</p>
+                </div>
+                {triageData.urgency_level && (
+                  <span className={`badge badge-${triageData.urgency_level === 'critical' || triageData.urgency_level === 'high' ? 'emergency' : triageData.urgency_level === 'medium' ? 'priority' : 'regular'}`} style={{ fontSize: 13, textTransform: 'uppercase', padding: '4px 10px' }}>
+                    {triageData.urgency_level} urgency
+                  </span>
+                )}
+              </div>
+
+              {triageData.chief_complaint && (
+                <div className="p-3 rounded" style={{ background: 'var(--card-bg-glass, var(--bg-card))', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs font-600 text-muted uppercase tracking-wider mb-1">Chief Clinical Complaint</div>
+                  <div className="font-600 text-sm">{triageData.chief_complaint}</div>
+                </div>
+              )}
+
+              {triageData.suggested_questions?.length > 0 && (
+                <div className="p-3 rounded" style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                  <div className="text-xs font-600 text-primary uppercase tracking-wider mb-2">Key Questions Doctor May Review</div>
+                  <ul className="flex flex-col gap-2" style={{ paddingLeft: 18, fontSize: 'var(--text-sm)' }}>
+                    {triageData.suggested_questions.map((q, i) => (
+                      <li key={i} className="text-secondary">{q}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="p-3 rounded" style={{ background: 'var(--bg-hover, rgba(255,255,255,0.03))' }}>
+                <div className="text-xs font-600 text-muted uppercase tracking-wider mb-1">Your Reported Symptoms</div>
+                <p className="text-sm text-secondary" style={{ whiteSpace: 'pre-wrap' }}>{triageData.symptom_text || symptomText}</p>
+              </div>
+
+              <div className="flex gap-3 mt-2">
+                <button
+                  className="btn btn-secondary flex-1"
+                  onClick={() => setIsEditingSymptoms(true)}
+                >
+                  Edit / Update Symptoms
+                </button>
+                <button
+                  className="btn btn-primary flex-1"
+                  onClick={() => setActiveTab('track')}
+                >
+                  View Live Queue
+                </button>
+              </div>
             </div>
           ) : (
             <div className="card card-pad flex flex-col gap-4">
@@ -457,7 +560,7 @@ export default function PatientPortal({ onToast }) {
 
               <div className="info-banner info">
                 <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                <span>This intake helps your doctor understand your condition better. Be as specific as possible.</span>
+                <span>This intake helps your doctor prepare for your visit. Be as specific as possible about symptoms, onset, and severity.</span>
               </div>
 
               <div className="form-group">
@@ -469,18 +572,29 @@ export default function PatientPortal({ onToast }) {
                   style={{ minHeight: 160 }}
                   value={symptomText}
                   onChange={e => setSymptomText(e.target.value)}
-                  placeholder="e.g. I've had a persistent headache for 3 days, mild fever around 99°F, and slight nausea in the mornings…"
+                  placeholder="e.g. I've had a persistent throbbing headache for 3 days, mild fever around 99°F, slight nausea, and sensitivity to bright lights…"
                 />
               </div>
 
-              <button
-                id="symptom-submit"
-                className="btn btn-primary btn-lg"
-                onClick={handleSymptomSubmit}
-                disabled={symptomSending || !symptomText.trim()}
-              >
-                {symptomSending ? <><span className="spinner spinner-sm" /> Submitting…</> : 'Submit Symptoms for AI Triage'}
-              </button>
+              <div className="flex gap-3">
+                {triageData && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsEditingSymptoms(false)}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  id="symptom-submit"
+                  className="btn btn-primary btn-lg flex-1"
+                  onClick={handleSymptomSubmit}
+                  disabled={symptomSending || !symptomText.trim()}
+                >
+                  {symptomSending ? <><span className="spinner spinner-sm" /> Running AI Triage…</> : 'Submit Symptoms for AI Triage'}
+                </button>
+              </div>
             </div>
           )}
         </div>

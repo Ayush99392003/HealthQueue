@@ -366,7 +366,7 @@ export default function DoctorDashboard({ onToast }) {
             <div className="triage-panel">
               <div className="triage-row">
                 <span className="triage-row-label">Urgency</span>
-                <span className={`badge badge-${triageModal.data.urgency_level === 'high' ? 'emergency' : triageModal.data.urgency_level === 'medium' ? 'priority' : 'regular'}`}>
+                <span className={`badge badge-${triageModal.data.urgency_level === 'critical' || triageModal.data.urgency_level === 'high' ? 'emergency' : triageModal.data.urgency_level === 'medium' ? 'priority' : 'regular'}`}>
                   {triageModal.data.urgency_level?.toUpperCase()}
                 </span>
               </div>

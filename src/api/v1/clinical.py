@@ -148,18 +148,20 @@ async def submit_symptoms(
     if entry.patient_id != current_user.id and current_user.role != "admin":
         raise ForbiddenError("You can only submit symptoms for your own appointment")
 
-    # Check if symptoms already submitted
+    # Check if symptoms already submitted — if so, update & re-triage instead of failing with 409
     existing = await db.execute(select(Symptoms).where(Symptoms.queue_id == queue_id))
-    if existing.scalar_one_or_none():
-        raise ConflictError(f"Symptoms already submitted for queue entry {queue_id}")
+    symptom = existing.scalar_one_or_none()
+    if symptom:
+        symptom.symptom_text = body.symptom_text
+        symptom.is_processed = False
+    else:
+        symptom = Symptoms(
+            queue_id=queue_id,
+            symptom_text=body.symptom_text,
+            is_processed=False,
+        )
+        db.add(symptom)
 
-    # Store raw symptoms first — ALWAYS before LLM call
-    symptom = Symptoms(
-        queue_id=queue_id,
-        symptom_text=body.symptom_text,
-        is_processed=False,
-    )
-    db.add(symptom)
     await db.commit()
     await db.refresh(symptom)
 
