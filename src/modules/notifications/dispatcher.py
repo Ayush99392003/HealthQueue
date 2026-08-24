@@ -67,6 +67,38 @@ def send_whatsapp(*, to: str, body: str) -> bool:
     return True
 
 
+# ── SMS (Twilio Direct Text Message) ──────────────────────────────────────────
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_random_exponential(multiplier=1, max=8),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def send_sms(*, to: str, body: str) -> bool:
+    """
+    Send a direct SMS text message via Twilio phone number.
+
+    Retries up to 3 times with exponential backoff.
+    Returns True on success.
+    """
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+        raise ValueError("Twilio credentials not configured — TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN required")
+
+    client = TwilioClient(settings.twilio_account_sid, settings.twilio_auth_token)
+    raw_from = (settings.twilio_whatsapp_from or "+15614733679").replace("whatsapp:", "")
+    to_formatted = to.replace("whatsapp:", "")
+
+    message = client.messages.create(
+        from_=raw_from,
+        to=to_formatted,
+        body=body,
+    )
+    logger.info("SMS sent — sid=%s to=%s", message.sid, to)
+    return True
+
+
 # ── Email (SMTP) ──────────────────────────────────────────────────────────────
 
 
@@ -117,37 +149,60 @@ def dispatch(
     email_text: str = "",
 ) -> tuple[bool, str | None]:
     """
-    Dispatch a notification on the specified channel with fallback.
+    Dispatch a notification on the specified channel with automatic fallback.
 
     Fallback chain:
-    - channel='whatsapp': try WhatsApp → on failure, try Email → on failure, return failed
+    - channel='whatsapp': try WhatsApp → on failure, try SMS → on failure, try Email
+    - channel='sms': try SMS → on failure, try Email
     - channel='email': try Email → on failure, return failed
 
     Returns:
         (success: bool, error_message: str | None)
     """
+    body_text = whatsapp_body or email_text or subject
+
     if channel == "whatsapp":
         try:
-            send_whatsapp(to=destination, body=whatsapp_body)
+            send_whatsapp(to=destination, body=whatsapp_body or body_text)
             return True, None
-        except (TwilioRestException, ValueError, Exception) as wa_exc:
-            logger.error(
-                "WhatsApp dispatch failed — falling back to Email. destination=%s error=%s",
-                destination, wa_exc,
-            )
-            # Fallback: try email
+        except Exception as wa_exc:
+            logger.warning("WhatsApp dispatch failed — falling back to SMS: %s", wa_exc)
+            try:
+                send_sms(to=destination, body=body_text)
+                logger.info("WhatsApp→SMS fallback succeeded for destination=%s", destination)
+                return True, None
+            except Exception as sms_exc:
+                logger.warning("SMS fallback failed — falling back to Email: %s", sms_exc)
+                try:
+                    send_email(
+                        to=destination,
+                        subject=subject,
+                        html_body=email_html or f"<p>{body_text}</p>",
+                        text_body=email_text or body_text,
+                    )
+                    logger.info("WhatsApp→Email fallback succeeded for destination=%s", destination)
+                    return True, None
+                except Exception as email_exc:
+                    err = f"WhatsApp: {wa_exc} | SMS: {sms_exc} | Email: {email_exc}"
+                    logger.error("All channels failed — destination=%s error=%s", destination, err)
+                    return False, err
+
+    elif channel == "sms":
+        try:
+            send_sms(to=destination, body=body_text)
+            return True, None
+        except Exception as sms_exc:
+            logger.warning("SMS dispatch failed — falling back to Email: %s", sms_exc)
             try:
                 send_email(
                     to=destination,
                     subject=subject,
-                    html_body=email_html,
-                    text_body=email_text,
+                    html_body=email_html or f"<p>{body_text}</p>",
+                    text_body=email_text or body_text,
                 )
-                logger.info("WhatsApp→Email fallback succeeded for destination=%s", destination)
                 return True, None
             except Exception as email_exc:
-                err = f"WhatsApp: {wa_exc} | Email fallback: {email_exc}"
-                logger.error("Both channels failed — destination=%s error=%s", destination, err)
+                err = f"SMS: {sms_exc} | Email: {email_exc}"
                 return False, err
 
     elif channel == "email":
