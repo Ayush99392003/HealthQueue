@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "healthcare-appointment-manager"
 version = "0.1.0"
 description = "Intelligent token-based clinical queue with AI triage, ETA reflow, and dual-channel notifications"
-readme = { text = "Healthcare Appointment & Follow-up Manager", content-type = "text/plain" }
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 
