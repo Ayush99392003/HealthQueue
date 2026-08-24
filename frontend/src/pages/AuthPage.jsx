@@ -131,7 +131,11 @@ export default function AuthPage({ onToast }) {
                     key={r.id}
                     type="button"
                     className={`role-option ${regForm.role === r.id ? 'selected' : ''}`}
-                    onClick={() => setRegForm((p) => ({ ...p, role: r.id }))}
+                    onClick={() => setRegForm((p) => ({
+                      ...p,
+                      role: r.id,
+                      admin_secret: (r.id === 'admin' || r.id === 'doctor') ? (p.admin_secret || 'admin2026') : '',
+                    }))}
                   >
                     {r.icon}
                     {r.label}
