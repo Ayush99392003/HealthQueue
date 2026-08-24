@@ -30,8 +30,19 @@ export default function PatientPortal({ onToast }) {
   const [bookingForm, setBookingForm] = useState({ date: TODAY, session: 'morning', tier: 'regular' });
   const [booking, setBooking] = useState(false);
   const [bookedEntry, setBookedEntry] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hq_my_token') || 'null'); } catch { return null; }
+    try {
+      const entry = JSON.parse(localStorage.getItem('hq_my_token') || 'null');
+      if (entry && (entry.id || entry.queue_id)) {
+        return { ...entry, id: entry.id || entry.queue_id };
+      }
+      return null;
+    } catch {
+      return null;
+    }
   });
+
+  const currentQueueId = bookedEntry?.id || bookedEntry?.queue_id;
+
   const [symptomText, setSymptomText] = useState('');
   const [symptomSending, setSymptomSending] = useState(false);
   const [triageData, setTriageData] = useState(null);
@@ -63,10 +74,10 @@ export default function PatientPortal({ onToast }) {
 
   // Poll queue status when on tracker tab and have a booking
   useEffect(() => {
-    if (activeTab === 'track' && bookedEntry?.id) {
+    if (activeTab === 'track' && currentQueueId) {
       const poll = () => {
         setTrackLoading(true);
-        api.queue.status(bookedEntry.id)
+        api.queue.status(currentQueueId)
           .then(setQueueStatus)
           .catch(() => {})
           .finally(() => setTrackLoading(false));
@@ -75,13 +86,13 @@ export default function PatientPortal({ onToast }) {
       trackInterval.current = setInterval(poll, 20000);
     }
     return () => clearInterval(trackInterval.current);
-  }, [activeTab, bookedEntry?.id]);
+  }, [activeTab, currentQueueId]);
 
   // Fetch symptoms / AI triage when on symptoms tab
   useEffect(() => {
-    if (activeTab === 'symptoms' && bookedEntry?.id) {
+    if (activeTab === 'symptoms' && currentQueueId) {
       setLoadingTriage(true);
-      api.clinical.getSymptoms(bookedEntry.id)
+      api.clinical.getSymptoms(currentQueueId)
         .then(data => {
           setTriageData(data);
           if (data?.symptom_text) setSymptomText(data.symptom_text);
@@ -89,18 +100,18 @@ export default function PatientPortal({ onToast }) {
         .catch(() => setTriageData(null))
         .finally(() => setLoadingTriage(false));
     }
-  }, [activeTab, bookedEntry?.id]);
+  }, [activeTab, currentQueueId]);
 
   // Fetch post-visit records
   useEffect(() => {
-    if (activeTab === 'records' && bookedEntry?.id) {
+    if (activeTab === 'records' && currentQueueId) {
       setLoadingRecords(true);
-      api.clinical.getNotes(bookedEntry.id)
+      api.clinical.getNotes(currentQueueId)
         .then(setRecords)
         .catch(() => setRecords(null))
         .finally(() => setLoadingRecords(false));
     }
-  }, [activeTab, bookedEntry?.id]);
+  }, [activeTab, currentQueueId]);
 
   // Fetch patient's own schedule
   useEffect(() => {
@@ -125,12 +136,13 @@ export default function PatientPortal({ onToast }) {
         tier: bookingForm.tier,
         booking_mode: 'advance',
       });
-      localStorage.setItem('hq_my_token', JSON.stringify(entry));
-      setBookedEntry(entry);
-      onToast('success', 'Token booked!', `Your token #${entry.token_number} is confirmed.`);
+      const normalizedEntry = { ...entry, id: entry.id || entry.queue_id };
+      localStorage.setItem('hq_my_token', JSON.stringify(normalizedEntry));
+      setBookedEntry(normalizedEntry);
+      onToast('success', 'Token booked!', `Your token #${normalizedEntry.token_number} is confirmed.`);
 
-      if (bookingSymptom.trim() && entry.id) {
-        api.clinical.submitSymptoms(entry.id, bookingSymptom.trim())
+      if (bookingSymptom.trim() && normalizedEntry.id) {
+        api.clinical.submitSymptoms(normalizedEntry.id, bookingSymptom.trim())
           .then(() => setSymptomText(bookingSymptom.trim()))
           .catch(() => {});
       }
@@ -144,6 +156,7 @@ export default function PatientPortal({ onToast }) {
   };
 
   const pollTriageResult = async (queueId, attempts = 4) => {
+    if (!queueId) return;
     for (let i = 0; i < attempts; i++) {
       await new Promise(r => setTimeout(r, 1500));
       try {
@@ -162,12 +175,16 @@ export default function PatientPortal({ onToast }) {
 
   const handleSymptomSubmit = async () => {
     if (!symptomText.trim()) { onToast('warning', 'Enter symptoms', 'Please describe your symptoms.'); return; }
+    if (!currentQueueId) {
+      onToast('warning', 'No active appointment', 'Please select or book an appointment first.');
+      return;
+    }
     setSymptomSending(true);
     try {
-      await api.clinical.submitSymptoms(bookedEntry.id, symptomText);
+      await api.clinical.submitSymptoms(currentQueueId, symptomText);
       setIsEditingSymptoms(false);
       onToast('success', 'Symptoms submitted', 'AI is analyzing your symptoms and preparing a triage brief.');
-      await pollTriageResult(bookedEntry.id);
+      await pollTriageResult(currentQueueId);
     } catch (err) {
       onToast('error', 'Submission failed', err.message);
     } finally {
@@ -176,9 +193,9 @@ export default function PatientPortal({ onToast }) {
   };
 
   const handleRefreshStatus = () => {
-    if (!bookedEntry?.id) return;
+    if (!currentQueueId) return;
     setTrackLoading(true);
-    api.queue.status(bookedEntry.id)
+    api.queue.status(currentQueueId)
       .then(setQueueStatus)
       .catch(() => {})
       .finally(() => setTrackLoading(false));
@@ -675,8 +692,9 @@ export default function PatientPortal({ onToast }) {
                         className="btn btn-secondary"
                         style={{ whiteSpace: 'nowrap', fontSize: 12 }}
                         onClick={() => {
-                          localStorage.setItem('hq_my_token', JSON.stringify({ id: appt.queue_id, token_number: appt.token_number }));
-                          setBookedEntry({ id: appt.queue_id, token_number: appt.token_number });
+                          const full = { ...appt, id: appt.queue_id };
+                          localStorage.setItem('hq_my_token', JSON.stringify(full));
+                          setBookedEntry(full);
                           setActiveTab('track');
                         }}
                       >

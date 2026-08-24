@@ -49,6 +49,14 @@ async function request(method, path, body = null, auth = true) {
   return data;
 }
 
+function cleanId(id) {
+  if (id && typeof id === 'object') return id.id || id.queue_id;
+  if (!id || id === 'undefined' || id === 'null') {
+    throw new Error('A valid appointment/queue ID is required.');
+  }
+  return id;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const api = {
   auth: {
@@ -64,10 +72,10 @@ export const api = {
       const q = new URLSearchParams(params).toString();
       return request('GET', `/doctors${q ? '?' + q : ''}`);
     },
-    get: (id) => request('GET', `/doctors/${id}`),
+    get: (id) => request('GET', `/doctors/${cleanId(id)}`),
     create: (payload) => request('POST', '/doctors', payload),
-    setAvailability: (id, payload) => request('POST', `/doctors/${id}/availability`, payload),
-    addLeave: (id, payload) => request('POST', `/doctors/${id}/leave`, payload),
+    setAvailability: (id, payload) => request('POST', `/doctors/${cleanId(id)}/availability`, payload),
+    addLeave: (id, payload) => request('POST', `/doctors/${cleanId(id)}/leave`, payload),
     // AI-powered doctor suggestion based on symptoms or diagnosis text
     suggestBySymptoms: (symptoms) => {
       const q = new URLSearchParams({ symptoms }).toString();
@@ -83,29 +91,28 @@ export const api = {
   queue: {
     book: async (payload) => {
       const data = await request('POST', '/queue/book', payload);
-      // Backend returns queue_id; frontend uses .id everywhere — normalize here
-      if (data && data.queue_id != null && data.id == null) {
+      if (data && data.queue_id != null) {
         data.id = data.queue_id;
       }
       return data;
     },
-    status: (queueId) => request('GET', `/queue/${queueId}/status`),
-    list: (doctorId, date) => request('GET', `/queue/doctor/${doctorId}?appointment_date=${date}`),
+    status: (queueId) => request('GET', `/queue/${cleanId(queueId)}/status`),
+    list: (doctorId, date) => request('GET', `/queue/doctor/${cleanId(doctorId)}?appointment_date=${date}`),
     callNext: (doctorId, session) =>
-      request('POST', `/queue/doctor/${doctorId}/call-next`, { session }),
-    complete: (queueId) => request('POST', `/queue/${queueId}/complete`),
-    escalate: (queueId, tier) => request('POST', `/queue/${queueId}/escalate`, { tier }),
+      request('POST', `/queue/doctor/${cleanId(doctorId)}/call-next`, { session }),
+    complete: (queueId) => request('POST', `/queue/${cleanId(queueId)}/complete`),
+    escalate: (queueId, tier) => request('POST', `/queue/${cleanId(queueId)}/escalate`, { tier }),
     myAppointments: () => request('GET', '/queue/patient/my'),
   },
 
   // ── Clinical ───────────────────────────────────────────────────────────────
   clinical: {
     submitSymptoms: (queueId, symptomText) =>
-      request('POST', `/clinical/${queueId}/symptoms`, { symptom_text: symptomText }),
-    getSymptoms: (queueId) => request('GET', `/clinical/${queueId}/symptoms`),
+      request('POST', `/clinical/${cleanId(queueId)}/symptoms`, { symptom_text: symptomText }),
+    getSymptoms: (queueId) => request('GET', `/clinical/${cleanId(queueId)}/symptoms`),
     submitNotes: (queueId, payload) =>
-      request('POST', `/clinical/${queueId}/post-visit-notes`, payload),
-    getNotes: (queueId) => request('GET', `/clinical/${queueId}/post-visit-notes`),
+      request('POST', `/clinical/${cleanId(queueId)}/post-visit`, payload),
+    getNotes: (queueId) => request('GET', `/clinical/${cleanId(queueId)}/post-visit`),
   },
 
   // ── Admin ──────────────────────────────────────────────────────────────────

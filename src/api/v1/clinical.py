@@ -45,15 +45,32 @@ class SymptomResponse(BaseModel):
 
 
 class PrescriptionItemRequest(BaseModel):
-    medication_name: str
+    medication_name: str | None = None
+    name: str | None = None  # Frontend alias
     dosage: str | None = None
     frequency: str | None = None
     duration_days: int | None = None
 
+    def get_name(self) -> str:
+        return self.medication_name or self.name or "Medication"
+
 
 class PostVisitRequest(BaseModel):
-    doctor_clinical_notes: str = Field(..., min_length=10)
+    doctor_clinical_notes: str | None = None
+    raw_notes: str | None = None  # Frontend alias
     prescription: list[PrescriptionItemRequest] = Field(default_factory=list)
+    medications: list[PrescriptionItemRequest] = Field(default_factory=list)  # Frontend alias
+
+    def get_notes(self) -> str:
+        return (self.doctor_clinical_notes or self.raw_notes or "").strip()
+
+    def get_prescription(self) -> list[PrescriptionItemRequest]:
+        items = self.prescription or self.medications or []
+        # Ensure medication_name is set
+        for item in items:
+            if not item.medication_name and item.name:
+                item.medication_name = item.name
+        return items
 
 
 class PostVisitResponse(BaseModel):
@@ -228,28 +245,39 @@ async def submit_post_visit(
     if entry.doctor_id != current_user.id:
         raise ForbiddenError("You can only submit notes for your own patients")
 
+    notes_text = body.get_notes()
+    if not notes_text:
+        from src.core.exceptions import ValidationError
+        raise ValidationError("Clinical notes cannot be empty.")
+
+    rx_items = body.get_prescription()
+    prescription_json = [p.model_dump() for p in rx_items]
+
+    # Check if notes already submitted — if so, update instead of 409
     existing = await db.execute(
         select(PostVisitNotes).where(PostVisitNotes.queue_id == queue_id)
     )
-    if existing.scalar_one_or_none():
-        raise ConflictError(f"Post-visit notes already submitted for queue entry {queue_id}")
+    note = existing.scalar_one_or_none()
+    if note:
+        note.doctor_clinical_notes = notes_text
+        note.prescription = prescription_json
+        note.is_processed = False
+    else:
+        note = PostVisitNotes(
+            queue_id=queue_id,
+            doctor_clinical_notes=notes_text,
+            prescription=prescription_json,
+            is_processed=False,
+        )
+        db.add(note)
 
-    # Store raw notes and prescription — ALWAYS before LLM call
-    prescription_json = [p.model_dump() for p in body.prescription]
-    note = PostVisitNotes(
-        queue_id=queue_id,
-        doctor_clinical_notes=body.doctor_clinical_notes,
-        prescription=prescription_json,
-        is_processed=False,
-    )
-    db.add(note)
     await db.flush()
 
-    # Create normalized Medication records
-    for item in body.prescription:
+    # Create or update normalized Medication records
+    for item in rx_items:
         med = Medication(
             post_visit_id=note.id,
-            medication_name=item.medication_name,
+            medication_name=item.get_name(),
             dosage=item.dosage,
             frequency=item.frequency,
             duration_days=item.duration_days,
@@ -264,7 +292,7 @@ async def submit_post_visit(
         _run_post_visit_summary,
         queue_id=queue_id,
         note_id=note.id,
-        clinical_notes=body.doctor_clinical_notes,
+        clinical_notes=notes_text,
         prescription_json=prescription_json,
     )
 
