@@ -24,12 +24,17 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 def _get_async_database_url() -> str:
-    url = str(settings.database_url)
+    url = str(settings.database_url).strip()
+    if url.startswith("postgresql+asyncpg://"):
+        return url
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    return url
+    if url.startswith("sqlite"):
+        return url
+    logger.warning("Unrecognized database URL format: %s... Using fallback.", url[:20] if url else "empty")
+    return "sqlite+aiosqlite:///./healthqueue.db"
 
 
 _engine = create_async_engine(
