@@ -6,12 +6,13 @@ WORKDIR /app
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy dependency files
+# Copy dependency files and source
 COPY pyproject.toml .
+COPY src/ ./src/
 
-# Install dependencies into a virtual environment (no dev extras)
+# Install dependencies into a virtual environment
 RUN uv venv /app/.venv && \
-    uv pip install --python /app/.venv/bin/python -e "."
+    uv pip install --python /app/.venv/bin/python .
 
 # ── Production Stage ──────────────────────────────────────────────────────────
 FROM python:3.14-slim AS production
@@ -23,8 +24,6 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application source
 COPY src/ ./src/
-COPY alembic/ ./alembic/
-COPY alembic.ini .
 
 # Create log directory
 RUN mkdir -p logs
@@ -42,5 +41,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
 
-# Run database migrations then start the app
-CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 2"]
+# Start the app
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

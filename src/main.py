@@ -33,6 +33,17 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         settings.app_version,
         settings.environment,
     )
+    # Auto-initialize database tables
+    try:
+        from src.core.database import get_engine
+        from src.models.base import Base
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized/verified.")
+    except Exception as exc:
+        logger.warning("Could not auto-create database tables on startup: %s", exc)
+
     yield
     logger.info("Shutting down — disposing database engine")
     await close_engine()
