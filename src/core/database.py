@@ -7,6 +7,7 @@ Invariants enforced here:
 - Never call session.commit() directly — use `async with session.begin():`.
 """
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -16,47 +17,66 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from src.core.config import get_settings
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-settings = get_settings()
 
-def _get_async_database_url() -> str:
-    url = str(settings.database_url).strip()
-    if url.startswith("postgresql+asyncpg://"):
-        logger.info("Using PostgreSQL (asyncpg) database.")
-        return url
-    if url.startswith("postgresql://"):
-        logger.info("Using PostgreSQL database.")
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgres://"):
-        logger.info("Using PostgreSQL database (Heroku/Railway format).")
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    if url.startswith("sqlite"):
+def _resolve_database_url() -> str:
+    """
+    Resolve the async database URL.
+
+    Priority:
+    1. DATABASE_URL from os.environ (Railway / Docker inject this directly)
+    2. Settings.database_url from pydantic-settings / .env file
+
+    Converts postgresql:// / postgres:// -> postgresql+asyncpg://
+    Falls back to SQLite for local dev if nothing else is configured.
+    """
+    # Always check os.environ first — Railway injects DATABASE_URL here
+    raw = os.environ.get("DATABASE_URL", "").strip()
+
+    if not raw:
+        # Fall back to pydantic-settings
+        from src.core.config import get_settings
+        raw = str(get_settings().database_url).strip()
+
+    if raw.startswith("postgresql+asyncpg://"):
+        logger.info("Database: PostgreSQL (asyncpg driver) — production mode.")
+        return raw
+    if raw.startswith("postgresql://"):
+        logger.info("Database: PostgreSQL — converting URL to asyncpg driver.")
+        return raw.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if raw.startswith("postgres://"):
+        logger.info("Database: PostgreSQL (Railway/Heroku format) — converting URL to asyncpg driver.")
+        return raw.replace("postgres://", "postgresql+asyncpg://", 1)
+    if raw.startswith("sqlite"):
         logger.warning(
-            "⚠️  Using SQLite — data will be lost on server restart! "
-            "Set DATABASE_URL to a postgresql:// URL for production."
+            "⚠️  DATABASE: SQLite — data is ephemeral and WILL be wiped on server restart! "
+            "Set DATABASE_URL to a postgresql:// connection string for production persistence."
         )
-        return url
-    # Unrecognized — warn loudly and fall back to SQLite so server still starts
+        return raw
+
     logger.warning(
-        "⚠️  Unrecognized DATABASE_URL format '%s...' — falling back to SQLite. "
+        "⚠️  DATABASE: Unrecognized DATABASE_URL '%s...' — falling back to SQLite. "
         "Set DATABASE_URL to a valid postgresql:// connection string.",
-        url[:30] if url else "empty",
+        raw[:40] if raw else "empty",
     )
     return "sqlite+aiosqlite:///./healthqueue.db"
 
 
+# ── Engine ────────────────────────────────────────────────────────────────────
+
+_DB_URL = _resolve_database_url()
+_IS_POSTGRES = _DB_URL.startswith("postgresql")
+
 def _build_engine():
-    db_url = _get_async_database_url()
-    kwargs = {"echo": settings.debug}
-    if not db_url.startswith("sqlite"):
+    kwargs = {"echo": os.environ.get("DEBUG", "false").lower() == "true"}
+    if _IS_POSTGRES:
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20
         kwargs["pool_pre_ping"] = True
-    return create_async_engine(db_url, **kwargs)
+    return create_async_engine(_DB_URL, **kwargs)
 
 
 _engine = _build_engine()
@@ -65,6 +85,7 @@ _engine = _build_engine()
 def get_engine():
     """Return the global async database engine."""
     return _engine
+
 
 # ── Session Factories ─────────────────────────────────────────────────────────
 
@@ -75,13 +96,18 @@ _SessionFactory = async_sessionmaker(
     autoflush=False,
 )
 
-# Serializable factory — isolation_level set via execution_options on the factory (SQLAlchemy 2.0 correct approach)
+# SERIALIZABLE isolation only supported by PostgreSQL (asyncpg).
+# SQLite is SERIALIZABLE by default and does not accept execution_options isolation_level.
+_serializable_kwargs: dict = {}
+if _IS_POSTGRES:
+    _serializable_kwargs["execution_options"] = {"isolation_level": "SERIALIZABLE"}
+
 _SerializableSessionFactory = async_sessionmaker(
     bind=_engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autoflush=False,
-    execution_options={"isolation_level": "SERIALIZABLE"},
+    **_serializable_kwargs,
 )
 
 
@@ -108,8 +134,11 @@ async def get_serializable_session() -> AsyncGenerator[AsyncSession, None]:
     Context manager yielding a SERIALIZABLE isolation-level async session.
 
     MUST be used for all token booking and queue mutation operations.
-    Isolation level is set via execution_options on the session factory —
-    the correct SQLAlchemy 2.0 async approach (no raw SQL SET TRANSACTION needed).
+
+    On PostgreSQL: isolation_level=SERIALIZABLE is set via execution_options
+    on the session factory (correct SQLAlchemy 2.0 async approach).
+
+    On SQLite (dev/test): SQLite is SERIALIZABLE by default — no extra config needed.
 
     Example::
 
