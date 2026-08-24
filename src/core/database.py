@@ -37,13 +37,17 @@ def _get_async_database_url() -> str:
     return "sqlite+aiosqlite:///./healthqueue.db"
 
 
-_engine = create_async_engine(
-    _get_async_database_url(),
-    echo=settings.debug,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-)
+def _build_engine():
+    db_url = _get_async_database_url()
+    kwargs = {"echo": settings.debug}
+    if not db_url.startswith("sqlite"):
+        kwargs["pool_size"] = 10
+        kwargs["max_overflow"] = 20
+        kwargs["pool_pre_ping"] = True
+    return create_async_engine(db_url, **kwargs)
+
+
+_engine = _build_engine()
 
 
 def get_engine():
