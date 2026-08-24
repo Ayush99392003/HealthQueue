@@ -77,7 +77,7 @@ async def test_dispatcher_returns_false_for_invalid_channel():
     from src.modules.notifications.dispatcher import dispatch
 
     success, error = dispatch(
-        channel="sms",  # Invalid — not whatsapp or email
+        channel="carrier_pigeon",  # Invalid — not whatsapp or email
         destination="+911234567890",
         whatsapp_body="Test",
         email_html="<p>Test</p>",
