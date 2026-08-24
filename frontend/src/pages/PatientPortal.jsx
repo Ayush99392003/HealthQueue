@@ -389,6 +389,18 @@ export default function PatientPortal({ onToast }) {
                   <div className="divider" />
                   <div className="flex justify-between"><span className="text-muted">Tier</span><span className={`badge badge-${bookedEntry.tier}`}>{bookedEntry.tier}</span></div>
                 </div>
+
+                <div className="mt-4">
+                  <a
+                    href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=🏥+Clinical+Appointment+(Token+%23${bookedEntry.token_number})&details=HealthQueue+Appointment+with+Dr.+%23${bookedEntry.doctor_id}+%7C+Session:+${bookedEntry.session}+%7C+Tier:+${bookedEntry.tier}&dates=${(bookedEntry.appointment_date || '').replace(/-/g, '')}T040000Z/${(bookedEntry.appointment_date || '').replace(/-/g, '')}T043000Z`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-primary w-full"
+                    style={{ textDecoration: 'none', justifyContent: 'center' }}
+                  >
+                    <Calendar size={15} /> Add to Google Calendar
+                  </a>
+                </div>
               </div>
 
               <button
