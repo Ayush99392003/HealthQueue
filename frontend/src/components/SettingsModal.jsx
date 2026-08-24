@@ -177,6 +177,23 @@ export default function SettingsModal({ onClose, darkMode, onToggleDark, onToast
             <Shield size={16} style={{ flexShrink: 0, marginTop: 1 }} />
             <span>Your session is protected with JWT tokens. Tokens expire after 30 minutes of inactivity.</span>
           </div>
+
+          <div style={{ marginTop: 8 }}>
+            <button
+              className="btn btn-secondary w-full"
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await (await import('../services/api')).api.admin.seedDemo();
+                  onToast('success', 'Demo data loaded!', res.message);
+                } catch (err) {
+                  onToast('error', 'Seeding failed', err.message);
+                }
+              }}
+            >
+              ⚡ Load Clinical Demo Data
+            </button>
+          </div>
         </div>
       )}
     </Modal>

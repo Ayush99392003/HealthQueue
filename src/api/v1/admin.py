@@ -168,3 +168,221 @@ async def update_tier_config(
         logger.info("Tier config updated — doctor_id=%s updates=%s", doctor_id, updates)
 
     return {"message": "Tier configuration updated", "doctor_id": doctor_id, **updates}
+
+
+@router.post("/seed-demo")
+async def seed_demo_data(
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """
+    Populate rich demonstration data for testing all system features.
+    
+    Creates:
+    - 1 Admin: admin@clinic.com / Password123!
+    - 5 Specialist Doctors: Cardiology, Neurology, Dermatology, General Practice, Orthopedics
+    - Mon-Sat Morning & Evening Working Hours
+    - 3 Test Patients: rahul@example.com, sneha@example.com, vikram@example.com
+    - Queue tokens for today (Regular, Priority, Anchor, Emergency)
+    - Pre-visit AI triage briefs and post-visit digital prescriptions
+    """
+    from datetime import date, datetime, time, timedelta
+    from src.models.doctor import Doctor, DoctorAvailability
+    from src.models.queue import DoctorQueue
+    from src.models.clinical import Symptoms, PostVisitNotes, Medication
+    from src.modules.auth.service import hash_password
+
+    today = date.today()
+    default_password_hash = hash_password("Password123!")
+
+    # ── 1. Create System Users ────────────────────────────────────────────────
+    users_data = [
+        {"email": "admin@clinic.com", "role": "admin", "first_name": "Clinic", "last_name": "Admin", "phone": "+919000000001"},
+        {"email": "dr.sharma@clinic.com", "role": "doctor", "first_name": "Dr. Priya", "last_name": "Sharma", "phone": "+919876543210"},
+        {"email": "dr.mehta@clinic.com", "role": "doctor", "first_name": "Dr. Rajesh", "last_name": "Mehta", "phone": "+919876543211"},
+        {"email": "dr.kapoor@clinic.com", "role": "doctor", "first_name": "Dr. Ananya", "last_name": "Kapoor", "phone": "+919876543212"},
+        {"email": "dr.verma@clinic.com", "role": "doctor", "first_name": "Dr. Amit", "last_name": "Verma", "phone": "+919876543213"},
+        {"email": "dr.gupta@clinic.com", "role": "doctor", "first_name": "Dr. Sunita", "last_name": "Gupta", "phone": "+919876543214"},
+        {"email": "rahul@example.com", "role": "patient", "first_name": "Rahul", "last_name": "Verma", "phone": "+919123456780", "whatsapp_number": "+919123456780"},
+        {"email": "sneha@example.com", "role": "patient", "first_name": "Sneha", "last_name": "Patel", "phone": "+919123456781", "whatsapp_number": "+919123456781"},
+        {"email": "vikram@example.com", "role": "patient", "first_name": "Vikram", "last_name": "Singh", "phone": "+919123456782", "whatsapp_number": "+919123456782"},
+    ]
+
+    created_users = {}
+    for udata in users_data:
+        res = await db.execute(select(User).where(User.email == udata["email"]))
+        existing = res.scalar_one_or_none()
+        if existing:
+            created_users[udata["email"]] = existing
+        else:
+            user = User(
+                email=udata["email"],
+                password_hash=default_password_hash,
+                role=udata["role"],
+                first_name=udata["first_name"],
+                last_name=udata["last_name"],
+                phone=udata.get("phone"),
+                whatsapp_number=udata.get("whatsapp_number"),
+            )
+            db.add(user)
+            await db.flush()
+            created_users[udata["email"]] = user
+
+    # ── 2. Create Doctor Profiles ─────────────────────────────────────────────
+    doctors_spec = [
+        {"email": "dr.sharma@clinic.com", "spec": "Cardiology", "exp": 15, "bio": "Senior Interventional Cardiologist specializing in hypertension and preventive cardiology."},
+        {"email": "dr.mehta@clinic.com", "spec": "Neurology", "exp": 12, "bio": "Consultant Neurologist with expertise in chronic migraines, tremors, and sleep disorders."},
+        {"email": "dr.kapoor@clinic.com", "spec": "Dermatology", "exp": 8, "bio": "Clinical and aesthetic dermatologist treating eczema, psoriasis, and acute rashes."},
+        {"email": "dr.verma@clinic.com", "spec": "General Practice", "exp": 10, "bio": "Primary care physician managing acute infections, lifestyle disorders, and preventive health."},
+        {"email": "dr.gupta@clinic.com", "spec": "Orthopedics", "exp": 14, "bio": "Orthopedic surgeon specializing in joint pain, sports injuries, and spine rehabilitation."},
+    ]
+
+    for dinfo in doctors_spec:
+        user = created_users[dinfo["email"]]
+        res = await db.execute(select(Doctor).where(Doctor.id == user.id))
+        if not res.scalar_one_or_none():
+            doc = Doctor(
+                id=user.id,
+                specialisation=dinfo["spec"],
+                bio=dinfo["bio"],
+                experience_years=dinfo["exp"],
+                slot_duration_minutes=15,
+                avg_consult_minutes=12.5,
+                consult_sample_size=30,
+                booking_mode="hybrid",
+                anchor_slot_pct=25.0,
+                priority_slot_pct=25.0,
+                emergency_slot_pct=10.0,
+            )
+            db.add(doc)
+            await db.flush()
+
+            # Add availability Mon-Sat
+            for day in range(6):
+                db.add(DoctorAvailability(
+                    doctor_id=user.id,
+                    day_of_week=day,
+                    session="morning",
+                    start_time=time(9, 0),
+                    end_time=time(13, 0),
+                    is_working_day=True,
+                ))
+                db.add(DoctorAvailability(
+                    doctor_id=user.id,
+                    day_of_week=day,
+                    session="evening",
+                    start_time=time(17, 0),
+                    end_time=time(20, 0),
+                    is_working_day=True,
+                ))
+
+    # ── 3. Create Sample Today Queue Tokens for Dr. Sharma ────────────────────
+    dr_sharma_id = created_users["dr.sharma@clinic.com"].id
+    p_rahul = created_users["rahul@example.com"]
+    p_sneha = created_users["sneha@example.com"]
+    p_vikram = created_users["vikram@example.com"]
+
+    sample_queue = [
+        {
+            "token": 1,
+            "tier": "regular",
+            "slot_type": "open",
+            "patient": p_rahul,
+            "status": "waiting",
+            "booked_mins_ago": 45,
+            "symptoms": "Severe throbbing headache for 3 days with nausea and sensitivity to light.",
+            "urgency": "high",
+            "chief_complaint": "Acute migraine attack with photophobia and nausea",
+        },
+        {
+            "token": 2,
+            "tier": "priority",
+            "slot_type": "open",
+            "patient": p_sneha,
+            "status": "waiting",
+            "booked_mins_ago": 30,
+            "symptoms": "Age 68 follow-up: mild exertional dyspnea and swollen ankles in the evening.",
+            "urgency": "medium",
+            "chief_complaint": "Exertional shortness of breath with peripheral edema in elderly patient",
+        },
+        {
+            "token": 3,
+            "tier": "regular",
+            "slot_type": "anchor",
+            "anchor_time": time(10, 30),
+            "patient": p_vikram,
+            "status": "waiting",
+            "booked_mins_ago": 60,
+            "symptoms": "Routine 3-month post-angioplasty review. No active chest discomfort.",
+            "urgency": "low",
+            "chief_complaint": "Routine post-percutaneous coronary intervention follow-up",
+        },
+    ]
+
+    for qitem in sample_queue:
+        # Check if token exists for today
+        q_res = await db.execute(
+            select(DoctorQueue).where(
+                DoctorQueue.doctor_id == dr_sharma_id,
+                DoctorQueue.appointment_date == today,
+                DoctorQueue.session == "morning",
+                DoctorQueue.token_number == qitem["token"],
+            )
+        )
+        existing_q = q_res.scalar_one_or_none()
+        if not existing_q:
+            q_entry = DoctorQueue(
+                doctor_id=dr_sharma_id,
+                appointment_date=today,
+                session="morning",
+                token_number=qitem["token"],
+                display_position=qitem["token"],
+                patient_id=qitem["patient"].id,
+                tier=qitem["tier"],
+                slot_type=qitem["slot_type"],
+                anchor_time=qitem.get("anchor_time"),
+                status=qitem["status"],
+                booking_mode_used="advance",
+                booked_at=datetime.utcnow() - timedelta(minutes=qitem["booked_mins_ago"]),
+            )
+            db.add(q_entry)
+            await db.flush()
+
+            # Pre-visit symptoms intake
+            db.add(Symptoms(
+                queue_id=q_entry.id,
+                symptom_text=qitem["symptoms"],
+                urgency_level=qitem["urgency"],
+                ai_summary={
+                    "urgency_level": qitem["urgency"],
+                    "chief_complaint": qitem["chief_complaint"],
+                    "suggested_questions": [
+                        "When did the symptoms first manifest and has intensity changed?",
+                        "Are you currently adhering to your baseline prescribed medications?",
+                        "Have you observed any dizziness, chest discomfort, or visual disturbance?",
+                    ],
+                },
+                is_processed=True,
+                llm_provider_used="groq",
+            ))
+
+    await db.commit()
+    logger.info("Demo clinical test data seeded successfully.")
+
+    return {
+        "message": "Demo data seeded successfully!",
+        "admin_login": {"email": "admin@clinic.com", "password": "Password123!"},
+        "doctor_logins": [
+            {"name": "Dr. Priya Sharma", "specialisation": "Cardiology", "email": "dr.sharma@clinic.com", "password": "Password123!"},
+            {"name": "Dr. Rajesh Mehta", "specialisation": "Neurology", "email": "dr.mehta@clinic.com", "password": "Password123!"},
+            {"name": "Dr. Ananya Kapoor", "specialisation": "Dermatology", "email": "dr.kapoor@clinic.com", "password": "Password123!"},
+            {"name": "Dr. Amit Verma", "specialisation": "General Practice", "email": "dr.verma@clinic.com", "password": "Password123!"},
+            {"name": "Dr. Sunita Gupta", "specialisation": "Orthopedics", "email": "dr.gupta@clinic.com", "password": "Password123!"},
+        ],
+        "patient_logins": [
+            {"name": "Rahul Verma", "email": "rahul@example.com", "password": "Password123!"},
+            {"name": "Sneha Patel", "email": "sneha@example.com", "password": "Password123!"},
+            {"name": "Vikram Singh", "email": "vikram@example.com", "password": "Password123!"},
+        ],
+        "active_queue": "3 pre-loaded tokens with AI Triage for Dr. Priya Sharma (Cardiology) for Today Morning Session",
+    }
+

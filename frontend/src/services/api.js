@@ -104,6 +104,7 @@ export const api = {
   admin: {
     dashboard: () => request('GET', '/admin/dashboard'),
     delays: () => request('GET', '/admin/delays'),
+    seedDemo: () => request('POST', '/admin/seed-demo', null, false),
   },
 
   // ── Health check ───────────────────────────────────────────────────────────
