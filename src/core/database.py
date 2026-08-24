@@ -24,42 +24,58 @@ logger = get_logger(__name__)
 
 def _resolve_database_url() -> str:
     """
-    Resolve the async database URL.
+    Resolve the async database URL with Railway-resilient fallback chain:
 
-    Priority:
-    1. DATABASE_URL from os.environ (Railway / Docker inject this directly)
-    2. Settings.database_url from pydantic-settings / .env file
-
-    Converts postgresql:// / postgres:// -> postgresql+asyncpg://
-    Falls back to SQLite for local dev if nothing else is configured.
+    1. DATABASE_URL from os.environ (explicit env var or Railway reference)
+    2. Construct from PG* individual vars (PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD)
+       which Railway always injects when a PostgreSQL service is connected
+    3. pydantic-settings / .env file
+    4. SQLite fallback (dev only)
     """
-    # Always check os.environ first — Railway injects DATABASE_URL here
+    # Priority 1: DATABASE_URL env var (most common)
     raw = os.environ.get("DATABASE_URL", "").strip()
 
+    # Priority 2: Build from individual PG* vars (Railway always injects these)
     if not raw:
-        # Fall back to pydantic-settings
-        from src.core.config import get_settings
-        raw = str(get_settings().database_url).strip()
+        pghost = os.environ.get("PGHOST", "")
+        pgport = os.environ.get("PGPORT", "5432")
+        pgdb = os.environ.get("PGDATABASE", "")
+        pguser = os.environ.get("PGUSER", "")
+        pgpass = os.environ.get("PGPASSWORD", "")
+        if pghost and pgdb and pguser:
+            raw = f"postgresql://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}"
+            logger.info("Database: Built PostgreSQL URL from PG* environment variables (Railway).")
+
+    # Priority 3: pydantic-settings / .env fallback
+    if not raw:
+        try:
+            from src.core.config import get_settings
+            raw = str(get_settings().database_url).strip()
+        except Exception:
+            pass
+
+    if not raw:
+        raw = ""
 
     if raw.startswith("postgresql+asyncpg://"):
-        logger.info("Database: PostgreSQL (asyncpg driver) — production mode.")
+        logger.info("Database: PostgreSQL (asyncpg) — ready.")
         return raw
     if raw.startswith("postgresql://"):
-        logger.info("Database: PostgreSQL — converting URL to asyncpg driver.")
+        logger.info("Database: PostgreSQL — converting to asyncpg driver.")
         return raw.replace("postgresql://", "postgresql+asyncpg://", 1)
     if raw.startswith("postgres://"):
-        logger.info("Database: PostgreSQL (Railway/Heroku format) — converting URL to asyncpg driver.")
+        logger.info("Database: PostgreSQL (Railway/Heroku) — converting to asyncpg driver.")
         return raw.replace("postgres://", "postgresql+asyncpg://", 1)
     if raw.startswith("sqlite"):
         logger.warning(
-            "⚠️  DATABASE: SQLite — data is ephemeral and WILL be wiped on server restart! "
-            "Set DATABASE_URL to a postgresql:// connection string for production persistence."
+            "⚠️  DATABASE: SQLite — data is ephemeral and WILL be wiped on restart! "
+            "Connect a PostgreSQL service in Railway and set DATABASE_URL."
         )
         return raw
 
     logger.warning(
-        "⚠️  DATABASE: Unrecognized DATABASE_URL '%s...' — falling back to SQLite. "
-        "Set DATABASE_URL to a valid postgresql:// connection string.",
+        "⚠️  DATABASE: No valid DATABASE_URL found ('%s') — falling back to SQLite. "
+        "Set DATABASE_URL or connect a PostgreSQL plugin in Railway.",
         raw[:40] if raw else "empty",
     )
     return "sqlite+aiosqlite:///./healthqueue.db"
