@@ -81,7 +81,14 @@ export const api = {
 
   // ── Queue ──────────────────────────────────────────────────────────────────
   queue: {
-    book: (payload) => request('POST', '/queue/book', payload),
+    book: async (payload) => {
+      const data = await request('POST', '/queue/book', payload);
+      // Backend returns queue_id; frontend uses .id everywhere — normalize here
+      if (data && data.queue_id != null && data.id == null) {
+        data.id = data.queue_id;
+      }
+      return data;
+    },
     status: (queueId) => request('GET', `/queue/${queueId}/status`),
     list: (doctorId, date) => request('GET', `/queue/doctor/${doctorId}?appointment_date=${date}`),
     callNext: (doctorId, session) =>
