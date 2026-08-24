@@ -215,16 +215,16 @@ async def set_availability(
     _admin: User = Depends(require_role("admin")),
 ) -> dict:
     """Admin: Set or update a doctor's availability for a specific day and session."""
-    async with session.begin():
-        availability = await doctor_service.set_availability(
-            session,
-            doctor_id,
-            day_of_week=body.day_of_week,
-            session_name=body.session,
-            start_time=body.start_time,
-            end_time=body.end_time,
-            is_working_day=body.is_working_day,
-        )
+    availability = await doctor_service.set_availability(
+        session,
+        doctor_id,
+        day_of_week=body.day_of_week,
+        session_name=body.session,
+        start_time=body.start_time,
+        end_time=body.end_time,
+        is_working_day=body.is_working_day,
+    )
+    await session.commit()
     return {"message": "Availability updated", "availability_id": availability.id}
 
 
@@ -244,22 +244,23 @@ async def add_leave(
     if current_user.role == "doctor" and current_user.id != doctor_id:
         from src.core.exceptions import ForbiddenError
         raise ForbiddenError("Doctors can only record leave for their own schedule")
-    async with session.begin():
-        leave_record = await doctor_service.add_leave(
-            session,
-            doctor_id,
-            start_date=body.start_date,
-            end_date=body.end_date,
-            reason=body.reason,
-        )
 
-        # Resolve conflicts — cancel appointments and queue notifications
-        cancelled = await leave_conflict.resolve_leave_conflicts(
-            session,
-            doctor_id=doctor_id,
-            start_date=body.start_date,
-            end_date=body.end_date,
-        )
+    leave_record = await doctor_service.add_leave(
+        session,
+        doctor_id,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        reason=body.reason,
+    )
+
+    # Resolve conflicts — cancel appointments and queue notifications
+    cancelled = await leave_conflict.resolve_leave_conflicts(
+        session,
+        doctor_id=doctor_id,
+        start_date=body.start_date,
+        end_date=body.end_date,
+    )
+    await session.commit()
 
     logger.info(
         "Leave created — doctor_id=%s leave_id=%s cancelled=%d",
