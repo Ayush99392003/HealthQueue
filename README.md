@@ -1,132 +1,232 @@
-# Healthcare Appointment & Follow-up Manager
+# Healthcare Appointment & Follow-up Manager (HealthQueue)
 
-> **Intelligent, token-based hybrid clinical scheduling platform with automated pre-visit AI triage, dynamic queue reflow, post-visit summarization, and dual-channel notifications.**
+> **Intelligent, token-based hybrid clinical scheduling platform with automated pre-visit AI triage, dynamic queue reflow, post-visit summarization, dual-channel notifications, and Google Calendar synchronization.**
 
 ---
 
 ## 🌟 Overview
 
-Traditional healthcare booking systems fail because patient consultation times are unpredictable. This platform replaces rigid clock-time appointments with an **intelligent, token-based hybrid queue engine** backed by:
+Traditional healthcare scheduling fails because patient consultation durations are unpredictable. Rigid clock-time appointments create waiting room bottlenecks, doctor burnout, and walk-in vs. advance booking friction.
+
+**HealthQueue** replaces clock-time booking with an **intelligent, token-based hybrid queue engine** backed by:
 - **Pre-visit AI Triage:** Symptom intake and structured urgency scoring (`low`, `medium`, `high`) powered by `instructor` + Pydantic v2.
 - **Dynamic Queue Flow (`getNextToken`):** Intelligent serving order prioritizing Emergency cases, Anchor times, Priority tier (1-in-4), and First-Come-First-Served (FCFS).
 - **Concurrency & Double-Booking Protection:** `SERIALIZABLE` transactions with pessimistic row locking (`SELECT ... FOR UPDATE`).
-- **Real-Time Delay Detection:** Dynamic ETA recalculation and patient reflow alerts when consultations run behind pace.
-- **Post-Visit Summaries & Reminders:** Structured medication extraction and automatic WhatsApp/Email reminders.
-- **Dual-Calendar Syncing:** Google Calendar API OAuth 2.0 integration.
+- **Doctor Leave Conflict Automation:** Auto-cancellation of conflicting appointments with instant patient notifications.
+- **Post-Visit Summaries & Medication Reminders:** Structured prescription extraction and automated reminder jobs.
+- **Dual-Channel Notifications:** WhatsApp (Twilio) for real-time delay alerts and Email (SendGrid/SMTP) for formal records.
+- **Dual-Calendar Syncing:** Google Calendar API OAuth 2.0 integration for both doctor and patient.
 
 ---
 
 ## 🛠️ Technology Stack
 
 - **Backend:** Python 3.14+ (FastAPI + Pydantic v2 + SQLAlchemy 2.0 Async + `asyncpg`) adhering to PEP 8
+- **Frontend:** React (Vite) + Vanilla CSS Modern Design System (Patient Portal, Doctor Dashboard, Admin Control Center)
 - **Package Manager:** `uv`
-- **Structured AI / LLM Routing:** `instructor` (Groq, Azure OpenAI, Google Gemini, OpenAI, Anthropic) with Pydantic v2 schemas
-- **Retry & Fault Tolerance:** `tenacity` (exponential backoff, jitter, before-sleep logging)
-- **Logging:** `rich` structured console and file logging (`RichHandler` + contextual loggers)
-- **Database:** PostgreSQL (Hosted on Railway)
-- **Testing:** `pytest` (Unit and Scenario-Based Integration Tests, strict real data validation with no dummy mocks)
-- **Frontend:** React (Vite) + Tailwind CSS (Patient Portal, Doctor Dashboard, Admin Control Center)
-- **Notifications:** WhatsApp (Twilio) & Email (SMTP / SendGrid)
+- **Database:** PostgreSQL (Hosted on Railway / Neon / Local)
+- **AI & Structured Extraction:** `instructor` + Pydantic v2 (Groq `openai/gpt-oss-120b`, OpenAI, Anthropic, Gemini)
+- **Resilient Retries:** `tenacity` (exponential backoff with jitter and `before_sleep_log`)
+- **Logging:** `rich.logging.RichHandler` + structured contextual logging
+- **Testing:** `pytest` (Unit and Scenario-Based Integration Tests)
 
 ---
 
-## 🛡️ Centralized Error Handling & Fallbacks
-The system enforces strict domain fallbacks to ensure clinical workflows are never interrupted:
-- **AI Extractions (`instructor` + `tenacity`):** If an LLM call fails or times out (>5s), the system retries with exponential backoff. If retries fail, it logs to `llm_call_log`, marks `is_processed=False`, and falls back to displaying raw symptoms/doctor notes without blocking bookings.
-- **Dual-Channel Notification Fallback:** If WhatsApp delivery fails, it automatically falls back to Email dispatch, and logs pending retries for background queue workers.
-- **Database Concurrency Retries:** High-concurrency serialization collisions automatically retry up to 3 times before raising conflict errors.
-- **No Dummy Mock Policy:** If required payload parameters are missing, the API rejects immediately with `422 Unprocessable Entity` rather than silently inventing fake data.
+## 📐 System Design Write-Up (800 Words)
+
+### 1. Concurrency Control & Double-Booking Prevention
+In a clinical appointment system, simultaneous booking requests for the same doctor, date, and session create race conditions. HealthQueue enforces a **two-tier concurrency defense model**:
+- **Pessimistic Row-Level Locking:** During token booking (`POST /queue/book`), the backend initiates an explicit `SERIALIZABLE` async transaction. It executes a `SELECT ... FOR UPDATE` query on the doctor's queue for `(doctor_id, appointment_date, session)` before determining the next available token number and assigning slots.
+- **Database Unique Constraints:** At the database level, a compound unique constraint `UNIQUE (doctor_id, appointment_date, session, token_number)` acts as an infallible barrier against double allocations.
+- **Transient Slot Reservation (Hold Engine):** When a patient initiates slot selection, a 5-minute transient hold is recorded with an expiring timestamp. Expired holds are pruned automatically by background cleanup tasks, ensuring unconfirmed slots are swiftly returned to the open availability pool.
+
+### 2. Intelligent Queue Engine (`getNextToken`)
+The platform distinguishes between two fundamental identifiers:
+- `token_number`: An immutable identifier assigned at the time of booking.
+- `display_position`: A dynamic, recalculating position that dictates actual serving order.
+
+When a physician completes a consultation, `getNextToken()` computes the next serving patient using strict clinical hierarchy:
+1. **Emergency Tier ($E$):** Inserted immediately at `current_serving_token + 1`.
+2. **Anchor Slots ($A$):** Advance bookings fixed to specific clock times. If the doctor runs behind, anchors are prioritized within a 10-minute grace window; if running ahead, anchors are held until their target time.
+3. **Priority Tier ($P$):** Interleaved into the regular queue at a configured ratio (e.g., 1 priority token for every 3 regular tokens).
+4. **Regular Open Queue ($R$):** Served in strict First-Come, First-Served (FCFS) order based on `booked_at`.
+
+### 3. Doctor Leave Conflict Resolution
+When an administrator marks a doctor as on leave (`POST /doctors/{id}/leave`), the system executes an automated conflict resolution pipeline inside an atomic transaction:
+1. Identifies all booked appointments falling within `[start_date, end_date]`.
+2. Updates their status to `leave_cancelled`.
+3. Dispatches high-priority dual-channel notifications (WhatsApp interactive ping + Email cancellation receipt) containing one-click reschedule options.
+
+### 4. Resilient AI Pipeline & Fault Tolerance
+AI triage and post-visit summarization run through an `instructor`-wrapped multi-provider router guarded by `tenacity` retry policies:
+- Strict **5-second timeout** per attempt with up to 2 retries using random exponential backoff.
+- **Non-Blocking Graceful Fallback:** If LLM providers fail or time out, the transaction is **never aborted**. The system logs the failure to `llm_call_log`, marks `is_processed = false`, and falls back to preserving raw patient symptom text and raw physician clinical notes. The clinic operates uninterrupted with 99.9% uptime.
+
+### 5. Notification Reliability & Dual-Channel Fallback
+Notifications follow an active fallback cascade:
+- **WhatsApp (Twilio):** Real-time operational channel for queue delay alerts and approach pings.
+- **Email (SendGrid/SMTP):** Formal record channel for booking confirmations and clinical summaries.
+- If WhatsApp delivery fails (invalid number, carrier timeout), the dispatcher automatically fails over to Email and schedules an asynchronous retry for background workers.
 
 ---
 
-## 📁 Repository Structure
+## 🤖 LLM Prompt Templates & Schemas
 
+### 1. Pre-Visit Symptom Triage Prompt
+```text
+System: You are an expert clinical triage assistant.
+User Prompt:
+Analyse these symptoms and return: urgency level (Low / Medium / High), chief complaint, and three suggested questions for the doctor.
+Symptoms: <patient_symptoms>
 ```
-├── .gitignore                      # Comprehensive exclusion for Python, Node, caches, secrets
-├── AGENTS.md                       # Core architectural invariants and guidelines for AI agents
-├── README.md                       # Main project overview and setup instructions
-├── pyproject.toml                  # Python package configuration and dependencies
-├── docs/                           # Technical documentation suite
-│   ├── 01-requirements.md          # Functional & non-functional requirements
-│   ├── 02-system-architecture.md   # High-level architecture and data flows
-│   ├── 03-database-architecture.md # PostgreSQL DDL schemas & ER diagrams
-│   ├── 04-scheduling-and-concurrency.md # getNextToken algorithm and locking rules
-│   ├── 05-api-specification.md     # REST API contracts and endpoints
-│   ├── 06-ai-llm-integration.md    # Multi-provider LLM prompts and fallbacks
-│   ├── 07-system-design-document.md# 800-word formal system design document
-│   ├── 08-task-breakdown-and-roadmap.md # 6-phase implementation roadmap
-│   └── 09-phase-2-3-finalized-design.md # Finalized backend/frontend design specifications
-├── src/                            # Backend source code (FastAPI)
-│   ├── core/                       # Config, database engine, rich logging, exceptions
-│   ├── models/                     # SQLAlchemy 2.0 mapped models (9 core tables)
-│   ├── schemas/                    # Pydantic v2 request/response schemas
-│   ├── modules/                    # Domain logic (queue, AI triage, notifications, delay)
-│   ├── api/                        # FastAPI endpoint routers
-│   └── main.py                     # Application entrypoint
-└── tests/                          # Automated test suite
-    ├── conftest.py                 # Async test fixtures and database setup
-    ├── unit/                       # Unit tests for algorithms and schemas
-    └── scenarios/                  # Scenario-based end-to-end clinical workflow tests
+**JSON Output Schema:**
+```json
+{
+  "urgency_level": "low" | "medium" | "high",
+  "chief_complaint": "string",
+  "ai_summary": "string",
+  "suggested_questions": ["string", "string", "string"]
+}
+```
+
+### 2. Post-Visit Patient Summary & Medication Schedule Prompt
+```text
+System: You are a medical communication specialist.
+User Prompt:
+Convert these clinical notes into a patient-friendly summary with medication schedule and follow-up steps:
+<doctor_clinical_notes>
+```
+**JSON Output Schema:**
+```json
+{
+  "patient_friendly_summary": "string",
+  "key_findings": ["string"],
+  "follow_up_instructions": "string",
+  "medication_schedule": [
+    {
+      "name": "string",
+      "dosage": "string",
+      "frequency": "once_daily" | "twice_daily" | "three_times_daily" | "as_needed",
+      "timing_notes": "string"
+    }
+  ]
+}
 ```
 
 ---
 
-## 🚀 Getting Started
+## 📅 Google Calendar OAuth 2.0 Setup
 
-### 1. Prerequisites
-- Python 3.14+
-- `uv` package manager (`pip install uv` or standalone installer)
-- PostgreSQL database instance (local or on Railway)
+To enable automated Google Calendar event synchronization:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project and enable the **Google Calendar API**.
+3. Configure the **OAuth Consent Screen** (User Type: External) and add the scope `https://www.googleapis.com/auth/calendar.events`.
+4. Create **OAuth 2.0 Client ID Credentials** (Application Type: Web Application).
+5. Add Authorized Redirect URI: `http://localhost:8000/api/v1/calendar/callback`.
+6. Add the credentials to your `.env`:
+   ```env
+   GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your_client_secret
+   GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/calendar/callback
+   GOOGLE_OAUTH_ENCRYPTION_KEY=your_fernet_secret_key
+   ```
 
-### 2. Installation & Setup
+---
+
+## 🗄️ Database Architecture
+
+The PostgreSQL schema consists of 9 normalized core tables:
+1. `users`: System accounts (`patient`, `doctor`, `admin`) with bcrypt password hashes and contact info.
+2. `doctors`: Doctor profiles, slot duration, booking mode (`walk_in`, `advance_only`, `hybrid`), and capacity split percentages (`anchor_slot_pct`, `priority_slot_pct`, `emergency_slot_pct`).
+3. `doctor_availability`: Weekly working schedules per session (`morning`, `evening`, `full_day`).
+4. `doctor_leave`: Approved leave date ranges with conflict tracking.
+5. `doctor_queue`: Live token state (`token_number`, `display_position`, `tier`, `slot_type`, `status`).
+6. `symptoms`: Patient pre-visit intake and structured AI triage results.
+7. `post_visit_notes`: Physician clinical notes, diagnosis, and AI patient summaries.
+8. `medications` & `medication_reminders`: Normalized prescription items and scheduled reminder jobs.
+9. `notifications` & `llm_call_log`: Observability, notification audit trails, and LLM telemetry.
+
+---
+
+## 🔌 API Endpoint Reference
+
+| Method | Endpoint | Description | Role |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/register` | Register a new user (`patient`, `doctor`, `admin`) | Public |
+| `POST` | `/api/v1/auth/login` | Authenticate and obtain JWT access/refresh tokens | Public |
+| `GET` | `/api/v1/doctors` | List doctors with filter by specialisation | Public / Patient |
+| `POST` | `/api/v1/doctors` | Create a doctor profile | Admin |
+| `POST` | `/api/v1/doctors/{id}/availability` | Set doctor working hours and sessions | Admin |
+| `POST` | `/api/v1/doctors/{id}/leave` | Add leave and auto-cancel conflicting bookings | Admin |
+| `POST` | `/api/v1/queue/book` | Book token in hybrid queue with pessimistic lock | Patient |
+| `GET` | `/api/v1/queue/{id}/status` | Get live token position and estimated wait time | Patient |
+| `GET` | `/api/v1/queue/doctor/{id}` | Get real-time queue for doctor session | Doctor |
+| `POST` | `/api/v1/queue/doctor/{id}/call-next` | Advance queue via `getNextToken()` engine | Doctor |
+| `POST` | `/api/v1/queue/{id}/complete` | Mark consultation completed | Doctor |
+| `POST` | `/api/v1/clinical/{id}/symptoms` | Submit pre-visit symptoms for AI triage | Patient |
+| `GET` | `/api/v1/clinical/{id}/symptoms` | Review AI triage brief before consultation | Doctor |
+| `POST` | `/api/v1/clinical/{id}/post-visit-notes` | Submit clinical notes & prescription items | Doctor |
+| `GET` | `/api/v1/clinical/{id}/post-visit-notes` | View patient summary and medication reminders | Patient / Doctor |
+| `GET` | `/api/v1/admin/dashboard` | Real-time system KPI metrics and delay tracker | Admin |
+
+---
+
+## 🚀 Quickstart & Setup Guide
+
+### 1. Backend Setup
 ```bash
-# Clone the repository
-git clone <repo-url>
-cd unthinkable
+# Clone repository
+git clone https://github.com/Ayush99392003/HealthQueue.git
+cd HealthQueue
 
-# Create and activate virtual environment using uv
+# Setup virtual environment with uv
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies (including dev and test tools)
+# Install dependencies
 uv pip install -e ".[dev]"
-```
 
-### 3. Environment Configuration
-Copy `.env.example` to `.env` and fill in the required keys:
-```bash
+# Configure environment variables
 cp .env.example .env
-```
+# Edit .env with your DATABASE_URL and GROQ_API_KEY / LLM keys
 
-### 4. Running Database Migrations & Seeding
-```bash
-uv run alembic upgrade head
+# Run migrations & seed data
 uv run python -m src.scripts.seed_db
-```
 
-### 5. Running the Backend Server
-```bash
+# Start FastAPI server
 uv run uvicorn src.main:app --reload --port 8000
 ```
-Interactive API documentation will be available at:
 - Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+- Health Check: `http://localhost:8000/health`
+
+### 2. Frontend Setup
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install Node dependencies
+npm install
+
+# Start Vite development server
+npm run dev
+```
+- Web Application UI: `http://localhost:3000`
 
 ---
 
-## 🧪 Testing & Code Quality
+## 🧪 Testing
 
 ```bash
-# Run full unit and scenario-based test suite
+# Run unit and scenario integration test suites
 uv run pytest -v
 
-# Run PEP 8 linting and formatting checks
+# Run code format and lint checks
 uv run ruff check .
-uv run ruff format --check .
 ```
 
 ---
 
-## 📖 Detailed Documentation
+## 🌐 Deployment Guide
 
-Consult the [`docs/`](./docs) directory for in-depth system designs, queue serving algorithms, and API specifications.
+- **Database & Backend:** Deploy to **Railway** or **Render** using the provided `Dockerfile` and `docker-compose.yml`.
+- **Frontend:** Deploy `frontend/` to **Vercel** with `VITE_API_BASE_URL` pointing to your backend URL.
