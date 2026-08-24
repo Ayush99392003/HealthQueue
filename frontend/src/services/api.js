@@ -4,7 +4,19 @@
  * Attaches JWT Bearer token automatically from localStorage.
  */
 
-const BASE = '/api/v1';
+const PROD_BACKEND = 'https://healthqueue-production.up.railway.app';
+
+function getBaseUrl() {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('hq_api_url') : null;
+  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const raw = storedUrl || envUrl || (isLocal ? '' : PROD_BACKEND);
+  if (raw) {
+    const clean = raw.replace(/\/+$/, '');
+    return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
+  }
+  return '/api/v1';
+}
 
 function getToken() {
   return localStorage.getItem('hq_token') || '';
@@ -20,7 +32,8 @@ async function request(method, path, body = null, auth = true) {
   const config = { method, headers };
   if (body !== null) config.body = JSON.stringify(body);
 
-  const res = await fetch(`${BASE}${path}`, config);
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, config);
 
   if (res.status === 204) return null;
 
