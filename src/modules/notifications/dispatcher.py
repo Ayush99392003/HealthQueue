@@ -55,9 +55,11 @@ def send_whatsapp(*, to: str, body: str) -> bool:
 
     client = TwilioClient(settings.twilio_account_sid, settings.twilio_auth_token)
     to_formatted = f"whatsapp:{to}" if not to.startswith("whatsapp:") else to
+    raw_from = settings.twilio_whatsapp_from or "+15614733679"
+    from_formatted = f"whatsapp:{raw_from.replace('whatsapp:', '')}"
 
     message = client.messages.create(
-        from_=settings.twilio_whatsapp_from,
+        from_=from_formatted,
         to=to_formatted,
         body=body,
     )
