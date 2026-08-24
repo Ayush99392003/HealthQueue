@@ -142,7 +142,8 @@ async def suggest_doctors(
 
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_model=DoctorResponse)
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=DoctorResponse)
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=DoctorResponse, include_in_schema=False)
 async def create_doctor(
     body: DoctorCreateRequest,
     session: AsyncSession = Depends(get_db_session),
@@ -165,7 +166,8 @@ async def create_doctor(
     return DoctorResponse.model_validate(doctor)
 
 
-@router.get("/", response_model=list[DoctorResponse])
+@router.get("", response_model=list[DoctorResponse])
+@router.get("/", response_model=list[DoctorResponse], include_in_schema=False)
 async def list_doctors(
     specialisation: str | None = None,
     booking_mode: str | None = None,

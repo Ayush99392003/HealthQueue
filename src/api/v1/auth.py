@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import get_settings
 from src.core.database import get_db_session
 from src.core.exceptions import ConflictError, UnauthorizedError
 from src.core.logger import get_logger
@@ -17,6 +18,7 @@ from src.modules.auth.service import (
 )
 
 logger = get_logger(__name__)
+settings = get_settings()
 router = APIRouter()
 
 
