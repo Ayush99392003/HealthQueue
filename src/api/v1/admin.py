@@ -27,6 +27,7 @@ class SystemStats(BaseModel):
 
 
 @router.get("/stats", response_model=SystemStats)
+@router.get("/dashboard", response_model=SystemStats, include_in_schema=False)
 async def get_stats(
     db: AsyncSession = Depends(get_db_session),
     _admin: User = Depends(require_role("admin")),
@@ -74,6 +75,7 @@ async def get_stats(
 
 
 @router.get("/scheduling-dashboard")
+@router.get("/delays", include_in_schema=False)
 async def scheduling_dashboard(
     db: AsyncSession = Depends(get_db_session),
     _admin: User = Depends(require_role("admin")),
