@@ -77,7 +77,6 @@ class NextTokenResponse(BaseModel):
 @router.post("/book", status_code=status.HTTP_201_CREATED, response_model=BookingResponse)
 async def book_appointment(
     body: BookingRequest,
-    db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> BookingResponse:
     """
@@ -102,25 +101,36 @@ async def book_appointment(
         booking_mode_used="advance" if body.slot_type == "anchor" else "walk_in",
     )
 
-    # Fetch ETA for response
-    eta_data = await calculate_eta(
-        db,
-        doctor_id=body.doctor_id,
-        appointment_date=body.appointment_date,
-        queue_session=body.session,
-        patient_queue_id=entry.id,
-    )
+    # Fetch ETA using a fresh session (book_token committed in its own SERIALIZABLE session)
+    eta_data = {"estimated_wait_minutes": None, "eta_time": None}
+    try:
+        async for fresh_db in get_db_session():
+            eta_data = await calculate_eta(
+                fresh_db,
+                doctor_id=body.doctor_id,
+                appointment_date=body.appointment_date,
+                queue_session=body.session,
+                patient_queue_id=entry.id,
+            )
+            break
+    except Exception as eta_exc:
+        logger.warning("ETA calculation failed (non-blocking): %s", eta_exc)
 
     # Store symptom text if provided (async LLM triage triggered separately)
     if body.symptom_text:
-        from src.models.clinical import Symptoms
-        symptom = Symptoms(
-            queue_id=entry.id,
-            symptom_text=body.symptom_text,
-            is_processed=False,  # LLM triage runs asynchronously
-        )
-        db.add(symptom)
-        await db.commit()
+        try:
+            from src.models.clinical import Symptoms
+            async for sym_db in get_db_session():
+                symptom = Symptoms(
+                    queue_id=entry.id,
+                    symptom_text=body.symptom_text,
+                    is_processed=False,
+                )
+                sym_db.add(symptom)
+                await sym_db.commit()
+                break
+        except Exception as sym_exc:
+            logger.warning("Symptom save failed (non-blocking): %s", sym_exc)
 
     logger.info(
         "Booking confirmed — queue_id=%s token=%d patient_id=%s",
