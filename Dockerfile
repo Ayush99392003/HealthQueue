@@ -7,7 +7,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy dependency files and source
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
 # Install dependencies into a virtual environment
