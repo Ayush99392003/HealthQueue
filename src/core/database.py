@@ -75,12 +75,13 @@ _SessionFactory = async_sessionmaker(
     autoflush=False,
 )
 
-# Serializable factory — isolation level is applied per-connection via sync_connection
+# Serializable factory — isolation_level set via execution_options on the factory (SQLAlchemy 2.0 correct approach)
 _SerializableSessionFactory = async_sessionmaker(
     bind=_engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autoflush=False,
+    execution_options={"isolation_level": "SERIALIZABLE"},
 )
 
 
@@ -104,10 +105,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 @asynccontextmanager
 async def get_serializable_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Context manager yielding a SERIALIZABLE isolation-level session.
+    Context manager yielding a SERIALIZABLE isolation-level async session.
 
     MUST be used for all token booking and queue mutation operations.
-    Enforces pessimistic locking invariant (SELECT ... FOR UPDATE).
+    Isolation level is set via execution_options on the session factory —
+    the correct SQLAlchemy 2.0 async approach (no raw SQL SET TRANSACTION needed).
 
     Example::
 
@@ -120,13 +122,6 @@ async def get_serializable_session() -> AsyncGenerator[AsyncSession, None]:
                 )
     """
     async with _SerializableSessionFactory() as session:
-        # Set SERIALIZABLE isolation BEFORE opening the transaction.
-        # Using execution_options on the connection is the correct async approach.
-        # Raw SET TRANSACTION only works inside BEGIN, causing OperationalError otherwise.
-        conn = await session.connection(
-            execution_options={"isolation_level": "SERIALIZABLE"}
-        )
-        _ = conn  # noqa: used to apply execution_options
         try:
             yield session
         except Exception:
