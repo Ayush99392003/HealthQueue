@@ -29,10 +29,10 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # ── Database ─────────────────────────────────────────────────────────────
-    database_url: PostgresDsn
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/healthqueue"
 
     # ── Security ─────────────────────────────────────────────────────────────
-    jwt_secret_key: str
+    jwt_secret_key: str = "healthqueue-super-secret-jwt-key-minimum-32-bytes!"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7

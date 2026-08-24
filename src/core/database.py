@@ -40,6 +40,11 @@ _engine = create_async_engine(
     pool_pre_ping=True,
 )
 
+
+def get_engine():
+    """Return the global async database engine."""
+    return _engine
+
 # ── Session Factories ─────────────────────────────────────────────────────────
 
 _SessionFactory = async_sessionmaker(
