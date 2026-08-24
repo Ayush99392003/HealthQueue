@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Auto-initialize database tables
     try:
         from src.core.database import get_engine
+        import src.models  # Register all models with Base.metadata
         from src.models.base import Base
         engine = get_engine()
         async with engine.begin() as conn:
