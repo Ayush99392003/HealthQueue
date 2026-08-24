@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     # ── Notifications — Twilio WhatsApp ──────────────────────────────────────
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
-    twilio_whatsapp_from: str = ""  # e.g. whatsapp:+14155238886
+    twilio_whatsapp_from: str = "whatsapp:+14155238886"  # Twilio Sandbox default
 
     # ── Notifications — Email ────────────────────────────────────────────────
     smtp_host: str = ""
