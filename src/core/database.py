@@ -32,8 +32,28 @@ def _get_async_database_url() -> str:
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
     if url.startswith("sqlite"):
+        # SQLite only allowed in development/test — data is wiped on every restart in production!
+        if settings.environment not in ("development", "test", "testing"):
+            raise RuntimeError(
+                "SQLite is NOT allowed in production. "
+                "Set DATABASE_URL to a valid postgresql:// connection string. "
+                "In Railway: check the PostgreSQL plugin is connected and DATABASE_URL is set."
+            )
+        logger.warning(
+            "⚠️  Using SQLite — data will be lost on server restart. "
+            "Set DATABASE_URL to a PostgreSQL URL for persistence."
+        )
         return url
-    logger.warning("Unrecognized database URL format: %s... Using fallback.", url[:20] if url else "empty")
+    # Unknown format — fall back to SQLite in dev only, error in production
+    if settings.environment not in ("development", "test", "testing"):
+        raise RuntimeError(
+            f"Unrecognized DATABASE_URL format '{url[:30]}...'. "
+            "Refusing to start in production without a valid PostgreSQL URL."
+        )
+    logger.warning(
+        "⚠️  Unrecognized DATABASE_URL '%s...' — falling back to SQLite for local dev only.",
+        url[:20] if url else "empty",
+    )
     return "sqlite+aiosqlite:///./healthqueue.db"
 
 
@@ -63,6 +83,7 @@ _SessionFactory = async_sessionmaker(
     autoflush=False,
 )
 
+# Serializable factory — isolation level is applied per-connection via sync_connection
 _SerializableSessionFactory = async_sessionmaker(
     bind=_engine,
     class_=AsyncSession,
@@ -107,12 +128,13 @@ async def get_serializable_session() -> AsyncGenerator[AsyncSession, None]:
                 )
     """
     async with _SerializableSessionFactory() as session:
-        await session.execute(
-            # Set SERIALIZABLE isolation for this connection
-            __import__("sqlalchemy").text(
-                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
-            )
+        # Set SERIALIZABLE isolation BEFORE opening the transaction.
+        # Using execution_options on the connection is the correct async approach.
+        # Raw SET TRANSACTION only works inside BEGIN, causing OperationalError otherwise.
+        conn = await session.connection(
+            execution_options={"isolation_level": "SERIALIZABLE"}
         )
+        _ = conn  # noqa: used to apply execution_options
         try:
             yield session
         except Exception:

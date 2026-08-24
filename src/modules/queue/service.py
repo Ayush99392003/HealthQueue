@@ -11,7 +11,7 @@ import logging
 from datetime import date
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import InternalError, OperationalError
 from tenacity import (
     before_sleep_log,
     retry,
@@ -31,11 +31,11 @@ logger = get_logger(__name__)
 
 
 @retry(
-    retry=retry_if_exception_type(OperationalError),
+    retry=retry_if_exception_type((OperationalError, InternalError)),
     stop=stop_after_attempt(3),
     wait=wait_random_exponential(multiplier=0.5, max=3),
     before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=False,
+    reraise=True,
 )
 async def book_token(
     *,
@@ -163,14 +163,3 @@ async def book_token(
                     new_token_number,
                 )
                 return queue_entry
-
-    except OperationalError as exc:
-        logger.error(
-            "Serialization collision on booking — doctor_id=%s date=%s: %s",
-            doctor_id,
-            appointment_date,
-            exc,
-        )
-        raise ConflictError(
-            "Booking failed due to concurrent requests. Please try again."
-        ) from exc
