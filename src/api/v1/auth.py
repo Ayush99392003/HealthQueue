@@ -94,7 +94,6 @@ async def register(
     )
     session.add(user)
     await session.commit()
-    await session.refresh(user)
 
     logger.info("New user registered — id=%s email=%s role=%s", user.id, user.email, user.role)
 

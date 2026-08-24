@@ -6,13 +6,18 @@ Each test runs in a rolled-back transaction to preserve isolation.
 """
 
 import asyncio
+import os
 from datetime import date, time
+
+# Force SQLite test database for pytest runs
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.core.config import get_settings
+from src.core.database import close_engine, get_engine
 from src.models.base import Base
 from src.models.clinical import Medication, MedicationReminder, PostVisitNotes, Symptoms
 from src.models.doctor import Doctor, DoctorAvailability
@@ -22,6 +27,7 @@ from src.models.user import User
 from src.modules.auth.service import hash_password
 
 settings = get_settings()
+
 
 
 @pytest.fixture(scope="session")
@@ -34,24 +40,25 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    """Create tables once per test session, drop after."""
+    """Create test SQLite async engine."""
     engine = create_async_engine("sqlite+aiosqlite:///./test.db", echo=False)
-    async with engine.begin() as conn:
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_tables(test_engine):
+    """Ensure clean tables before every test."""
+    async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+    yield
 
 
 @pytest_asyncio.fixture
 async def session(test_engine) -> AsyncSession:
     """
-    Provide a test session that rolls back after each test.
-
-    This ensures complete isolation between tests without requiring
-    database truncation or re-seeding between runs.
+    Provide an isolated test session for unit and scenario tests.
     """
     SessionFactory = async_sessionmaker(
         bind=test_engine,
@@ -63,6 +70,34 @@ async def session(test_engine) -> AsyncSession:
         async with s.begin():
             yield s
             await s.rollback()
+
+
+
+
+@pytest_asyncio.fixture
+async def async_client(test_engine):
+    """Provide an HTTPX AsyncClient with database session dependency override."""
+    from httpx import ASGITransport, AsyncClient
+    from src.core.database import get_db_session
+    from src.main import app
+
+    SessionFactory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+
+    async def _get_test_db():
+        async with SessionFactory() as s:
+            yield s
+
+    app.dependency_overrides[get_db_session] = _get_test_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    app.dependency_overrides.clear()
+
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

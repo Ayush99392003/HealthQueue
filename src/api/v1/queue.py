@@ -316,3 +316,123 @@ async def get_my_appointments(
         })
 
     return appointments
+
+
+@router.get("/doctor/{doctor_id}")
+async def get_doctor_queue(
+    doctor_id: int,
+    appointment_date: date | None = None,
+    session: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+) -> list[dict]:
+    """Fetch queue entries for a doctor on a specific date (defaults to today)."""
+    target_date = appointment_date or date.today()
+    stmt = (
+        select(DoctorQueue)
+        .where(
+            DoctorQueue.doctor_id == doctor_id,
+            DoctorQueue.appointment_date == target_date,
+        )
+    )
+    if session:
+        stmt = stmt.where(DoctorQueue.session == session)
+    stmt = stmt.order_by(DoctorQueue.display_position.asc(), DoctorQueue.token_number.asc())
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "token_number": e.token_number,
+            "display_position": e.display_position,
+            "patient_id": e.patient_id,
+            "tier": e.tier,
+            "slot_type": e.slot_type,
+            "anchor_time": str(e.anchor_time) if e.anchor_time else None,
+            "status": e.status,
+            "session": e.session,
+            "appointment_date": str(e.appointment_date),
+            "booked_at": e.booked_at.isoformat() if e.booked_at else None,
+        }
+        for e in entries
+    ]
+
+
+class CallNextBody(BaseModel):
+    session: str = "morning"
+    appointment_date: date | None = None
+
+
+@router.post("/doctor/{doctor_id}/call-next", response_model=NextTokenResponse)
+async def call_next_for_doctor(
+    doctor_id: int,
+    body: CallNextBody = None,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_role("doctor", "admin")),
+) -> NextTokenResponse:
+    """Call the next prioritized patient for this doctor's session."""
+    target_date = (body.appointment_date if body else None) or date.today()
+    target_session = (body.session if body else None) or "morning"
+
+    next_entry = await get_next_token(
+        db,
+        doctor_id=doctor_id,
+        appointment_date=target_date,
+        queue_session=target_session,
+    )
+    await recalculate_display_positions(
+        db,
+        doctor_id=doctor_id,
+        appointment_date=target_date,
+        queue_session=target_session,
+    )
+
+    if next_entry is None:
+        return NextTokenResponse(
+            message="No more patients waiting in queue",
+            next_queue_id=None,
+            next_token_number=None,
+            next_patient_name=None,
+            tier=None,
+        )
+
+    patient_res = await db.execute(select(User).where(User.id == next_entry.patient_id))
+    patient = patient_res.scalar_one_or_none()
+    patient_name = f"{patient.first_name} {patient.last_name}" if patient else "Unknown"
+
+    return NextTokenResponse(
+        message="Next patient called",
+        next_queue_id=next_entry.id,
+        next_token_number=next_entry.token_number,
+        next_patient_name=patient_name,
+        tier=next_entry.tier,
+    )
+
+
+class EscalateBody(BaseModel):
+    tier: str = "priority"
+
+
+@router.post("/{queue_id}/escalate")
+async def escalate_queue_entry(
+    queue_id: int,
+    body: EscalateBody,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_role("doctor", "admin")),
+) -> dict:
+    """Escalate a patient queue entry's tier."""
+    res = await db.execute(select(DoctorQueue).where(DoctorQueue.id == queue_id))
+    entry = res.scalar_one_or_none()
+    if not entry:
+        raise NotFoundError(f"Queue entry {queue_id} not found")
+
+    old_tier = entry.tier
+    entry.tier = body.tier
+    await db.commit()
+    await recalculate_display_positions(
+        db,
+        doctor_id=entry.doctor_id,
+        appointment_date=entry.appointment_date,
+        queue_session=entry.session,
+    )
+    return {"message": f"Escalated tier from {old_tier} to {body.tier}", "queue_id": queue_id, "new_tier": body.tier}
+
