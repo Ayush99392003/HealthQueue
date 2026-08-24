@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    # Secret key required to self-register as admin — keep this private
+    admin_registration_secret: str = ""
 
     # ── LLM Providers ────────────────────────────────────────────────────────
     default_llm_provider: str = "groq"  # groq | openai | anthropic | gemini | azure

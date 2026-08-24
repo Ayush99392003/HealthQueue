@@ -59,6 +59,13 @@ class UnauthorizedError(AppError):
 
 
 class ForbiddenError(AppError):
+    """Access denied — insufficient permissions or invalid secret."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_code = "FORBIDDEN"
+
+
+class ForbiddenError(AppError):
     """Authenticated but insufficient role permissions."""
 
     status_code = status.HTTP_403_FORBIDDEN

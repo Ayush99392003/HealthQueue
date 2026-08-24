@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,7 +67,79 @@ class LeaveConflictResponse(BaseModel):
     notifications_queued: int
 
 
+class DoctorSuggestResponse(BaseModel):
+    recommended_specialisation: str
+    reason: str
+    doctors: list[DoctorResponse]
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/suggest", response_model=DoctorSuggestResponse)
+async def suggest_doctors(
+    symptoms: str = Query(..., description="Patient symptoms or diagnosis description"),
+    session: AsyncSession = Depends(get_db_session),
+) -> DoctorSuggestResponse:
+    """
+    AI-powered doctor recommendation based on symptoms or diagnosis.
+
+    Uses the LLM to extract the best-matching medical specialisation from
+    the patient's symptoms/diagnosis, then returns available doctors.
+    """
+    from pydantic import Field as PydanticField
+    from src.modules.ai.router import llm_extract
+
+    class SpecialisationSuggest(BaseModel):
+        specialisation: str = PydanticField(
+            description=(
+                "The single most appropriate medical specialisation for these symptoms. "
+                "Use standard terms: Cardiology, Neurology, Orthopedics, ENT, Dermatology, "
+                "General Practice, Pulmonology, Gastroenterology, Psychiatry, Ophthalmology, "
+                "Obstetrics & Gynecology, Pediatrics, Urology, Endocrinology, Nephrology."
+            )
+        )
+        reason: str = PydanticField(
+            description="One-sentence clinical reasoning for this specialisation recommendation."
+        )
+
+    prompt = (
+        f"You are a clinical triage AI. A patient describes their condition as:\n\n"
+        f"\"{symptoms}\"\n\n"
+        f"Determine the single most appropriate medical specialisation this patient should see "
+        f"and provide a brief clinical reason."
+    )
+
+    result = await llm_extract(
+        response_model=SpecialisationSuggest,
+        prompt=prompt,
+        call_type="doctor_suggest",
+    )
+
+    if result:
+        recommended = result.specialisation
+        reason = result.reason
+    else:
+        # LLM fallback — default to General Practice
+        recommended = "General Practice"
+        reason = "Unable to determine specialisation from symptoms. Defaulting to General Practice."
+
+    doctors = await doctor_service.list_doctors(
+        session,
+        specialisation=recommended,
+    )
+
+    # If no exact match, return all doctors
+    if not doctors:
+        doctors = await doctor_service.list_doctors(session)
+        reason += " No exact specialisation match found — showing all available doctors."
+
+    return DoctorSuggestResponse(
+        recommended_specialisation=recommended,
+        reason=reason,
+        doctors=[DoctorResponse.model_validate(d) for d in doctors],
+    )
+
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=DoctorResponse)

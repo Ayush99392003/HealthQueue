@@ -31,6 +31,8 @@ class RegisterRequest(BaseModel):
     last_name: str
     phone: str | None = None
     whatsapp_number: str | None = None
+    # Required only when registering as doctor or admin
+    admin_secret: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -64,6 +66,16 @@ async def register(
     if body.role not in {"patient", "doctor", "admin"}:
         from src.core.exceptions import ValidationError
         raise ValidationError(f"Invalid role: {body.role!r}. Must be patient, doctor, or admin.")
+
+    # Admin and Doctor registration require the admin_registration_secret
+    if body.role in {"admin", "doctor"}:
+        expected_secret = settings.admin_registration_secret
+        if not expected_secret:
+            from src.core.exceptions import ForbiddenError
+            raise ForbiddenError("Admin/Doctor self-registration is disabled. Contact your system administrator.")
+        if body.admin_secret != expected_secret:
+            from src.core.exceptions import ForbiddenError
+            raise ForbiddenError("Invalid admin secret. Admin/Doctor registration is restricted.")
 
     # Check for duplicate email
     existing = await session.execute(select(User).where(User.email == body.email))

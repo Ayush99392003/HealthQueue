@@ -68,6 +68,15 @@ export const api = {
     create: (payload) => request('POST', '/doctors/', payload),
     setAvailability: (id, payload) => request('POST', `/doctors/${id}/availability`, payload),
     addLeave: (id, payload) => request('POST', `/doctors/${id}/leave`, payload),
+    // AI-powered doctor suggestion based on symptoms or diagnosis text
+    suggestBySymptoms: (symptoms) => {
+      const q = new URLSearchParams({ symptoms }).toString();
+      return request('GET', `/doctors/suggest?${q}`);
+    },
+    search: (query) => {
+      const q = new URLSearchParams({ specialisation: query }).toString();
+      return request('GET', `/doctors?${q}`);
+    },
   },
 
   // ── Queue ──────────────────────────────────────────────────────────────────
