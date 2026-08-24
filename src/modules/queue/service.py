@@ -78,88 +78,87 @@ async def book_token(
         QueueFullError: No more token slots available for this session.
         ConflictError: All concurrency retries exhausted.
     """
-    try:
-        async with get_serializable_session() as session:
-            async with session.begin():
-                # ── Validate doctor exists ─────────────────────────────────
-                doctor_result = await session.execute(
-                    select(Doctor).where(Doctor.id == doctor_id)
-                )
-                doctor = doctor_result.scalar_one_or_none()
-                if doctor is None:
-                    raise DoctorNotAvailableError(
-                        f"Doctor {doctor_id} not found"
-                    )
-
-                # ── Check leave conflict ───────────────────────────────────
-                leave_result = await session.execute(
-                    select(DoctorLeave).where(
-                        DoctorLeave.doctor_id == doctor_id,
-                        DoctorLeave.start_date <= appointment_date,
-                        DoctorLeave.end_date >= appointment_date,
-                    )
-                )
-                if leave_result.scalar_one_or_none():
-                    raise DoctorNotAvailableError(
-                        f"Doctor {doctor_id} is on approved leave on {appointment_date}"
-                    )
-
-                # ── Lock the queue for this doctor/date/session ───────────
-                await session.execute(
-                    select(DoctorQueue)
-                    .where(
-                        DoctorQueue.doctor_id == doctor_id,
-                        DoctorQueue.appointment_date == appointment_date,
-                        DoctorQueue.session == queue_session,
-                    )
-                    .with_for_update()
-                    .limit(1)
+    async with get_serializable_session() as session:
+        async with session.begin():
+            # ── Validate doctor exists ─────────────────────────────────
+            doctor_result = await session.execute(
+                select(Doctor).where(Doctor.id == doctor_id)
+            )
+            doctor = doctor_result.scalar_one_or_none()
+            if doctor is None:
+                raise DoctorNotAvailableError(
+                    f"Doctor {doctor_id} not found"
                 )
 
-                # ── Assign next sequential token_number ───────────────────
-                max_token_result = await session.execute(
-                    select(func.max(DoctorQueue.token_number)).where(
-                        DoctorQueue.doctor_id == doctor_id,
-                        DoctorQueue.appointment_date == appointment_date,
-                        DoctorQueue.session == queue_session,
-                    )
+            # ── Check leave conflict ───────────────────────────────────
+            leave_result = await session.execute(
+                select(DoctorLeave).where(
+                    DoctorLeave.doctor_id == doctor_id,
+                    DoctorLeave.start_date <= appointment_date,
+                    DoctorLeave.end_date >= appointment_date,
                 )
-                max_token = max_token_result.scalar_one_or_none() or 0
-                new_token_number = max_token + 1
-
-                logger.info(
-                    "Assigning token_number=%d — doctor_id=%s date=%s session=%s patient_id=%s",
-                    new_token_number,
-                    doctor_id,
-                    appointment_date,
-                    queue_session,
-                    patient_id,
+            )
+            if leave_result.scalar_one_or_none():
+                raise DoctorNotAvailableError(
+                    f"Doctor {doctor_id} is on approved leave on {appointment_date}"
                 )
 
-                # ── Create queue entry ────────────────────────────────────
-                queue_entry = DoctorQueue(
-                    doctor_id=doctor_id,
-                    appointment_date=appointment_date,
-                    session=queue_session,
-                    token_number=new_token_number,
-                    patient_id=patient_id,
-                    tier=tier,
-                    slot_type=slot_type,
-                    anchor_time=anchor_time,
-                    status="waiting",
-                    booking_mode_used=booking_mode_used,
+            # ── Lock the queue for this doctor/date/session ───────────
+            await session.execute(
+                select(DoctorQueue)
+                .where(
+                    DoctorQueue.doctor_id == doctor_id,
+                    DoctorQueue.appointment_date == appointment_date,
+                    DoctorQueue.session == queue_session,
                 )
-                session.add(queue_entry)
-                await session.flush()  # Get the ID before commit
+                .with_for_update()
+                .limit(1)
+            )
 
-                # ── Recalculate all display_positions ─────────────────────
-                await recalculate_display_positions(
-                    session, doctor_id, appointment_date, queue_session
+            # ── Assign next sequential token_number ───────────────────
+            max_token_result = await session.execute(
+                select(func.max(DoctorQueue.token_number)).where(
+                    DoctorQueue.doctor_id == doctor_id,
+                    DoctorQueue.appointment_date == appointment_date,
+                    DoctorQueue.session == queue_session,
                 )
+            )
+            max_token = max_token_result.scalar_one_or_none() or 0
+            new_token_number = max_token + 1
 
-                logger.info(
-                    "Token booked successfully — queue_id=%s token_number=%d",
-                    queue_entry.id,
-                    new_token_number,
-                )
-                return queue_entry
+            logger.info(
+                "Assigning token_number=%d — doctor_id=%s date=%s session=%s patient_id=%s",
+                new_token_number,
+                doctor_id,
+                appointment_date,
+                queue_session,
+                patient_id,
+            )
+
+            # ── Create queue entry ────────────────────────────────────
+            queue_entry = DoctorQueue(
+                doctor_id=doctor_id,
+                appointment_date=appointment_date,
+                session=queue_session,
+                token_number=new_token_number,
+                patient_id=patient_id,
+                tier=tier,
+                slot_type=slot_type,
+                anchor_time=anchor_time,
+                status="waiting",
+                booking_mode_used=booking_mode_used,
+            )
+            session.add(queue_entry)
+            await session.flush()  # Get the ID before commit
+
+            # ── Recalculate all display_positions ─────────────────────
+            await recalculate_display_positions(
+                session, doctor_id, appointment_date, queue_session
+            )
+
+            logger.info(
+                "Token booked successfully — queue_id=%s token_number=%d",
+                queue_entry.id,
+                new_token_number,
+            )
+            return queue_entry

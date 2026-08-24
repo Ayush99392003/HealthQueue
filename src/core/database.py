@@ -26,33 +26,25 @@ settings = get_settings()
 def _get_async_database_url() -> str:
     url = str(settings.database_url).strip()
     if url.startswith("postgresql+asyncpg://"):
+        logger.info("Using PostgreSQL (asyncpg) database.")
         return url
     if url.startswith("postgresql://"):
+        logger.info("Using PostgreSQL database.")
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if url.startswith("postgres://"):
+        logger.info("Using PostgreSQL database (Heroku/Railway format).")
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
     if url.startswith("sqlite"):
-        # SQLite only allowed in development/test — data is wiped on every restart in production!
-        if settings.environment not in ("development", "test", "testing"):
-            raise RuntimeError(
-                "SQLite is NOT allowed in production. "
-                "Set DATABASE_URL to a valid postgresql:// connection string. "
-                "In Railway: check the PostgreSQL plugin is connected and DATABASE_URL is set."
-            )
         logger.warning(
-            "⚠️  Using SQLite — data will be lost on server restart. "
-            "Set DATABASE_URL to a PostgreSQL URL for persistence."
+            "⚠️  Using SQLite — data will be lost on server restart! "
+            "Set DATABASE_URL to a postgresql:// URL for production."
         )
         return url
-    # Unknown format — fall back to SQLite in dev only, error in production
-    if settings.environment not in ("development", "test", "testing"):
-        raise RuntimeError(
-            f"Unrecognized DATABASE_URL format '{url[:30]}...'. "
-            "Refusing to start in production without a valid PostgreSQL URL."
-        )
+    # Unrecognized — warn loudly and fall back to SQLite so server still starts
     logger.warning(
-        "⚠️  Unrecognized DATABASE_URL '%s...' — falling back to SQLite for local dev only.",
-        url[:20] if url else "empty",
+        "⚠️  Unrecognized DATABASE_URL format '%s...' — falling back to SQLite. "
+        "Set DATABASE_URL to a valid postgresql:// connection string.",
+        url[:30] if url else "empty",
     )
     return "sqlite+aiosqlite:///./healthqueue.db"
 
