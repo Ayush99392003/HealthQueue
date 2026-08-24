@@ -45,6 +45,24 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     except Exception as exc:
         logger.warning("Could not auto-create database tables on startup: %s", exc)
 
+    # Auto-seed demo data if DB is empty (ensures doctors visible to all new users)
+    try:
+        from src.core.database import get_db_session
+        from src.models.user import User
+        from sqlalchemy import select, func
+        async for session in get_db_session():
+            count = (await session.execute(select(func.count(User.id)))).scalar_one()
+            if count == 0:
+                logger.info("Empty database detected — auto-seeding demo data...")
+                from src.api.v1.admin import seed_demo_data
+                await seed_demo_data(db=session)
+                logger.info("Demo data seeded successfully on startup.")
+            else:
+                logger.info("Database has %d users — skipping auto-seed.", count)
+            break
+    except Exception as exc:
+        logger.warning("Could not auto-seed demo data: %s", exc)
+
     yield
     logger.info("Shutting down — disposing database engine")
     await close_engine()

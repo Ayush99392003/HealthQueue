@@ -45,6 +45,10 @@ export default function PatientPortal({ onToast }) {
   const [records, setRecords] = useState(null);
   const [loadingRecords, setLoadingRecords] = useState(false);
 
+  // --- My Schedule tab ---
+  const [myAppointments, setMyAppointments] = useState([]);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+
   // Fetch doctors on mount / search change
   useEffect(() => {
     setLoadingDoctors(true);
@@ -80,6 +84,17 @@ export default function PatientPortal({ onToast }) {
         .finally(() => setLoadingRecords(false));
     }
   }, [activeTab, bookedEntry?.id]);
+
+  // Fetch patient's own schedule
+  useEffect(() => {
+    if (activeTab === 'schedule') {
+      setLoadingSchedule(true);
+      api.queue.myAppointments()
+        .then(setMyAppointments)
+        .catch(() => setMyAppointments([]))
+        .finally(() => setLoadingSchedule(false));
+    }
+  }, [activeTab]);
 
   const handleBook = async () => {
     if (!selectedDoctor) { onToast('warning', 'Select a doctor', 'Please choose a doctor first.'); return; }
@@ -151,6 +166,7 @@ export default function PatientPortal({ onToast }) {
 
   const tabs = [
     { id: 'book', label: 'Book Appointment', icon: <Calendar size={15} /> },
+    { id: 'schedule', label: 'My Schedule', icon: <Clock size={15} /> },
     { id: 'track', label: 'Live Queue', icon: <Activity size={15} /> },
     { id: 'symptoms', label: 'Pre-Visit Intake', icon: <FileText size={15} /> },
     { id: 'records', label: 'Post-Visit Records', icon: <CheckCircle size={15} /> },
@@ -238,7 +254,7 @@ export default function PatientPortal({ onToast }) {
                       onClick={() => setSelectedDoctor(doc)}
                     >
                       <div className="doctor-avatar">{(doc.specialisation?.[0] || 'D').toUpperCase()}</div>
-                      <div className="doctor-name">Dr. #{doc.id}</div>
+                      <div className="doctor-name">{doc.name || `Dr. #${doc.id}`}</div>
                       <div className="doctor-spec">{doc.specialisation}</div>
                       <div className="doctor-meta">
                         <span className="badge badge-neutral">{doc.booking_mode}</span>
@@ -304,7 +320,7 @@ export default function PatientPortal({ onToast }) {
                 {selectedDoctor && (
                   <div className="info-banner success">
                     <CheckCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <span>Dr. #{selectedDoctor.id} — {selectedDoctor.specialisation} selected</span>
+                    <span>{selectedDoctor.name || `Dr. #${selectedDoctor.id}`} — {selectedDoctor.specialisation} selected</span>
                   </div>
                 )}
 
@@ -465,6 +481,97 @@ export default function PatientPortal({ onToast }) {
               >
                 {symptomSending ? <><span className="spinner spinner-sm" /> Submitting…</> : 'Submit Symptoms for AI Triage'}
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== MY SCHEDULE TAB ===== */}
+      {activeTab === 'schedule' && (
+        <div style={{ maxWidth: 720, margin: '0 auto' }}>
+          <div className="section-header" style={{ marginBottom: 16 }}>
+            <div>
+              <h3 className="font-700" style={{ fontSize: 'var(--text-lg)' }}>My Appointments</h3>
+              <p className="text-sm text-muted">All your bookings — past and upcoming</p>
+            </div>
+            <button className="btn btn-secondary" onClick={() => {
+              setLoadingSchedule(true);
+              api.queue.myAppointments().then(setMyAppointments).catch(() => {}).finally(() => setLoadingSchedule(false));
+            }}>
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
+
+          {loadingSchedule ? (
+            <div className="loading-overlay"><span className="spinner" /> Loading schedule…</div>
+          ) : myAppointments.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Calendar size={48} /></div>
+              <h3>No appointments yet</h3>
+              <p>Book your first appointment to see your schedule here.</p>
+              <button className="btn btn-primary mt-4" onClick={() => setActiveTab('book')}>Book Now</button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {myAppointments.map(appt => {
+                const statusColor = {
+                  waiting: 'var(--primary)',
+                  in_progress: 'var(--warning)',
+                  completed: 'var(--success)',
+                  cancelled: 'var(--danger)',
+                }[appt.status] || 'var(--text-muted)';
+                const tierColor = {
+                  emergency: 'var(--tier-emergency)',
+                  priority: 'var(--tier-priority)',
+                  anchor: 'var(--tier-anchor)',
+                  regular: 'var(--tier-regular)',
+                }[appt.tier] || 'var(--text-muted)';
+                return (
+                  <div key={appt.queue_id} className="card card-pad" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <div style={{
+                      width: 52, height: 52, borderRadius: 'var(--radius-lg)',
+                      background: statusColor + '18', color: statusColor,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 800, fontSize: 'var(--text-lg)', flexShrink: 0,
+                    }}>
+                      #{appt.token_number}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', marginBottom: 2 }}>
+                        {appt.doctor_name}
+                      </div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                        {appt.doctor_specialisation} &bull; {appt.session.charAt(0).toUpperCase() + appt.session.slice(1)} Session
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-full)', background: statusColor + '18', color: statusColor }}>
+                          {appt.status.replace('_', ' ').toUpperCase()}
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-full)', background: tierColor + '18', color: tierColor }}>
+                          {appt.tier.toUpperCase()}
+                        </span>
+                        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                          <Calendar size={11} style={{ display: 'inline', marginRight: 3 }} />
+                          {appt.appointment_date}
+                        </span>
+                      </div>
+                    </div>
+                    {appt.status === 'waiting' && (
+                      <button
+                        className="btn btn-secondary"
+                        style={{ whiteSpace: 'nowrap', fontSize: 12 }}
+                        onClick={() => {
+                          localStorage.setItem('hq_my_token', JSON.stringify({ id: appt.queue_id, token_number: appt.token_number }));
+                          setBookedEntry({ id: appt.queue_id, token_number: appt.token_number });
+                          setActiveTab('track');
+                        }}
+                      >
+                        <Activity size={13} /> Track
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

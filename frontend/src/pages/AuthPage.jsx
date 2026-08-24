@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, User, Stethoscope, Shield } from 'lucide-react';
+import { Activity, User, Stethoscope, Shield, Zap, Lock } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -9,16 +9,54 @@ const ROLES = [
   { id: 'admin', label: 'Admin', icon: <Shield size={20} /> },
 ];
 
+const DEMO_ACCOUNTS = [
+  {
+    role: 'patient',
+    label: 'Patient',
+    name: 'Rahul Verma',
+    email: 'rahul@example.com',
+    password: 'Password123!',
+    Icon: User,
+    gradient: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)',
+    description: 'Book appointments, track live queue position, AI symptom triage',
+    badge: 'Token #7 • Waiting',
+    badgeColor: '#3b82f6',
+  },
+  {
+    role: 'doctor',
+    label: 'Doctor',
+    name: 'Dr. Priya Sharma',
+    email: 'dr.sharma@clinic.com',
+    password: 'Password123!',
+    Icon: Stethoscope,
+    gradient: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+    description: 'View queue, complete consultations, add clinical notes',
+    badge: 'Cardiology • 12 Waiting',
+    badgeColor: '#10b981',
+  },
+  {
+    role: 'admin',
+    label: 'Admin',
+    name: 'System Admin',
+    email: 'admin@clinic.com',
+    password: 'Password123!',
+    Icon: Shield,
+    gradient: 'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
+    description: 'System stats, doctor management, leave & reschedule control',
+    badge: 'All Access',
+    badgeColor: '#f59e0b',
+  },
+];
+
 export default function AuthPage({ onToast }) {
   const { login } = useAuth();
   const [tab, setTab] = useState('login');
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(null);
 
-  // Login form
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [loginError, setLoginError] = useState('');
 
-  // Register form
   const [regForm, setRegForm] = useState({
     email: '', password: '', role: 'patient',
     first_name: '', last_name: '', phone: '', whatsapp_number: '',
@@ -37,6 +75,23 @@ export default function AuthPage({ onToast }) {
       setLoginError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async (account) => {
+    setDemoLoading(account.role);
+    setLoginError('');
+    try {
+      const data = await api.auth.login(account.email, account.password);
+      login(data);
+      onToast('success', `Welcome, ${account.name}!`, `Demo ${account.label} session started`);
+    } catch {
+      // Demo data may not be seeded yet — pre-fill login form for manual entry
+      setTab('login');
+      setLoginForm({ email: account.email, password: account.password });
+      setLoginError(`Demo account not found. Use: ${account.email} / ${account.password}  — or ask admin to run /api/v1/admin/seed-demo`);
+    } finally {
+      setDemoLoading(null);
     }
   };
 
@@ -61,7 +116,7 @@ export default function AuthPage({ onToast }) {
 
   return (
     <div className="auth-page">
-      <div className="auth-panel">
+      <div className="auth-panel auth-panel-wide">
         {/* Logo */}
         <div className="auth-logo">
           <div className="auth-logo-icon">
@@ -72,6 +127,49 @@ export default function AuthPage({ onToast }) {
             <p>Smart Clinical Appointment Manager</p>
           </div>
         </div>
+
+        {/* ── QUICK DEMO ACCESS ── */}
+        <div className="demo-section">
+          <div className="demo-section-label">
+            <Zap size={13} />
+            <span>Quick Demo Access</span>
+            <span className="demo-section-hint">Click any card to sign in instantly</span>
+          </div>
+          <div className="demo-cards">
+            {DEMO_ACCOUNTS.map((account) => {
+              const { Icon } = account;
+              const isLoading = demoLoading === account.role;
+              return (
+                <button
+                  key={account.role}
+                  id={`demo-${account.role}`}
+                  className="demo-card"
+                  onClick={() => handleDemoLogin(account)}
+                  disabled={demoLoading !== null}
+                  aria-label={`Sign in as demo ${account.label}`}
+                >
+                  <div className="demo-card-header">
+                    <div className="demo-card-avatar" style={{ background: account.gradient }}>
+                      {isLoading ? <span className="spinner spinner-sm" /> : <Icon size={17} />}
+                    </div>
+                    <span className="demo-card-badge" style={{ background: account.badgeColor + '22', color: account.badgeColor }}>
+                      {account.badge}
+                    </span>
+                  </div>
+                  <div className="demo-card-role">{account.label}</div>
+                  <div className="demo-card-name">{account.name}</div>
+                  <p className="demo-card-desc">{account.description}</p>
+                  <div className="demo-card-email">
+                    <Lock size={9} />
+                    <span>{account.email}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="auth-or-divider"><span>or sign in manually</span></div>
 
         {/* Tabs */}
         <div className="auth-tabs">
@@ -122,7 +220,6 @@ export default function AuthPage({ onToast }) {
         {/* Register Form */}
         {tab === 'register' && (
           <form className="auth-form" onSubmit={handleRegister}>
-            {/* Role picker */}
             <div className="form-group">
               <label className="form-label">I am a…</label>
               <div className="role-picker">
@@ -174,7 +271,6 @@ export default function AuthPage({ onToast }) {
               </div>
             </div>
 
-            {/* Staff Passcode for Admin / Doctor roles */}
             {(regForm.role === 'admin' || regForm.role === 'doctor') && (
               <div className="form-group">
                 <label className="form-label">Staff Security Passcode (Default: admin2026)</label>

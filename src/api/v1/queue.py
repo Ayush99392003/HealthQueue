@@ -259,3 +259,46 @@ async def complete_and_call_next(
         next_patient_name=patient_name,
         tier=next_entry.tier,
     )
+
+
+@router.get("/patient/my")
+async def get_my_appointments(
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """
+    Patient: Fetch all of my appointments (all statuses), enriched with doctor name.
+
+    Returns appointment_date, session, token_number, status, tier, doctor info.
+    Sorted newest first.
+    """
+    from src.models.doctor import Doctor
+    from src.models.user import User as UserModel
+
+    result = await db.execute(
+        select(DoctorQueue, Doctor, UserModel)
+        .join(Doctor, DoctorQueue.doctor_id == Doctor.id)
+        .join(UserModel, Doctor.id == UserModel.id)
+        .where(DoctorQueue.patient_id == current_user.id)
+        .order_by(DoctorQueue.appointment_date.desc(), DoctorQueue.booked_at.desc())
+    )
+    rows = result.all()
+
+    appointments = []
+    for entry, doctor, doc_user in rows:
+        appointments.append({
+            "queue_id": entry.id,
+            "token_number": entry.token_number,
+            "display_position": entry.display_position,
+            "status": entry.status,
+            "tier": entry.tier,
+            "session": entry.session,
+            "appointment_date": str(entry.appointment_date),
+            "booked_at": entry.booked_at.isoformat() if entry.booked_at else None,
+            "doctor_id": doctor.id,
+            "doctor_name": f"{doc_user.first_name} {doc_user.last_name}",
+            "doctor_specialisation": doctor.specialisation,
+            "doctor_bio": doctor.bio,
+        })
+
+    return appointments

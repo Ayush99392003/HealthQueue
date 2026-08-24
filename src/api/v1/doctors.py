@@ -48,6 +48,8 @@ class LeaveRequest(BaseModel):
 
 class DoctorResponse(BaseModel):
     id: int
+    name: str | None = None
+    email: str | None = None
     specialisation: str
     bio: str | None
     experience_years: int | None
@@ -173,13 +175,26 @@ async def list_doctors(
     booking_mode: str | None = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> list[DoctorResponse]:
-    """List all active doctors with optional filters."""
-    doctors = await doctor_service.list_doctors(
-        session,
-        specialisation=specialisation,
-        booking_mode=booking_mode,
-    )
-    return [DoctorResponse.model_validate(d) for d in doctors]
+    """List all active doctors with optional filters, enriched with user names."""
+    from sqlalchemy import select as sa_select
+    from src.models.doctor import Doctor
+    from src.models.user import User as UserModel
+    query = sa_select(Doctor, UserModel).join(
+        UserModel, Doctor.id == UserModel.id
+    ).where(UserModel.is_active.is_(True))
+    if specialisation:
+        query = query.where(Doctor.specialisation.ilike(f"%{specialisation}%"))
+    if booking_mode:
+        query = query.where(Doctor.booking_mode == booking_mode)
+    result = await session.execute(query)
+    rows = result.all()
+    enriched = []
+    for doc, usr in rows:
+        r = DoctorResponse.model_validate(doc)
+        r.name = f"{usr.first_name} {usr.last_name}"
+        r.email = usr.email
+        enriched.append(r)
+    return enriched
 
 
 @router.get("/{doctor_id}", response_model=DoctorResponse)

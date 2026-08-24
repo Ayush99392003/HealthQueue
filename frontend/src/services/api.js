@@ -88,6 +88,7 @@ export const api = {
       request('POST', `/queue/doctor/${doctorId}/call-next`, { session }),
     complete: (queueId) => request('POST', `/queue/${queueId}/complete`),
     escalate: (queueId, tier) => request('POST', `/queue/${queueId}/escalate`, { tier }),
+    myAppointments: () => request('GET', '/queue/patient/my'),
   },
 
   // ── Clinical ───────────────────────────────────────────────────────────────
