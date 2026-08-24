@@ -23,10 +23,17 @@ logger = get_logger(__name__)
 
 settings = get_settings()
 
-# ── Engine ────────────────────────────────────────────────────────────────────
+def _get_async_database_url() -> str:
+    url = str(settings.database_url)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
 
 _engine = create_async_engine(
-    str(settings.database_url),
+    _get_async_database_url(),
     echo=settings.debug,
     pool_size=10,
     max_overflow=20,
